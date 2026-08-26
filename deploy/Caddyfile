@@ -1,0 +1,44 @@
+# TLS, HTTP/3 and compression in front of the one binary. Caddy obtains and
+# renews the certificate itself; there is no certbot and no cron for it.
+#
+# Replace both placeholders before the first boot.
+{
+	# Let's Encrypt uses this to warn you before an expiry it could not renew.
+	email you@example.com
+}
+
+pomodorus.example.com {
+	# The binary sets Cache-Control but never compresses; this is where the JS
+	# bundle stops being 400 KB on a phone.
+	encode zstd gzip
+
+	reverse_proxy app:8081
+
+	# There is deliberately no `header_up X-Forwarded-For` here.
+	#
+	# TRUST_PROXY_HEADERS=1 is baked into the image, and the server reads the
+	# *first* value of X-Forwarded-For to pick a rate-limit bucket
+	# (server/internal/httpapi/auth.go). That is only safe because Caddy
+	# discards whatever the client sent and writes the real peer address:
+	# an incoming X-Forwarded-For is preserved only from a peer listed in
+	# `trusted_proxies`, and that list is empty. Same for X-Forwarded-Proto,
+	# which decides the Secure flag on the session cookie. Verified against
+	# Caddy 2.11; re-check it if you ever pin an older major.
+	#
+	# THE ONE THING THAT BREAKS THIS: putting a CDN in front (Cloudflare,
+	# ArvanCloud). Then the peer is the CDN, every request arrives from a
+	# handful of edge addresses, and the whole internet shares one login
+	# rate-limit bucket. Fix it by trusting the CDN explicitly, so Caddy keeps
+	# the address the CDN forwarded instead of overwriting it with the edge's:
+	#
+	#   reverse_proxy app:8081 {
+	#       trusted_proxies static 1.2.3.0/24 2.3.4.0/24   # the CDN's ranges
+	#   }
+	#
+	# List only the CDN's published ranges. `trusted_proxies static 0.0.0.0/0`
+	# trusts everyone, which is the per-host limit not existing at all.
+
+	# The WebSocket needs no configuration: Caddy proxies Upgrade natively and
+	# the http transport has no read or write timeout by default, so a socket
+	# held open across a 25-minute pomodoro is not cut.
+}

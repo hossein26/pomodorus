@@ -51,16 +51,25 @@ One binary serves the API, the WebSocket and the client.
 
 ## Deploying
 
-The whole app is one Docker image: the client built into the binary, on Liara,
-with managed Postgres and a managed email server beside it.
+The whole app is one Docker image: the client built into the binary.
+
+On Liara, with managed Postgres and a managed email server beside it:
 
 ```bash
 liara deploy   # or: make deploy
 ```
 
+On a Linux box you own, as three containers — Postgres, the app, and Caddy
+terminating TLS — described by `deploy/docker-compose.prod.yml`:
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml up -d --build
+```
+
 Step by step, including the parts that are not obvious — port 587 and not 465,
-the `citext` extension, the permanent VAPID keypair, and why this runs on one
-instance — see `docs/deploy-liara.md`.
+the `citext` extension, the permanent VAPID keypair, why this runs on one
+instance, and why Docker publishing a port ignores your firewall — see
+`docs/deploy-liara.md` and `docs/deploy-vps.md`.
 
 ## Testing
 

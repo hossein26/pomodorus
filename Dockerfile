@@ -6,9 +6,14 @@
 FROM node:22-alpine AS client
 WORKDIR /src
 
+# Overridable so the image can be built from a network that cannot reach the
+# public registry — see docs/deploy-vps.md. The default is the public one, so
+# a build that passes nothing behaves exactly as it always did.
+ARG NPM_REGISTRY=https://registry.npmjs.org/
+
 # The lockfile alone first, so a source-only change does not reinstall.
 COPY client/package.json client/package-lock.json ./client/
-RUN cd client && npm ci
+RUN cd client && npm ci --registry="$NPM_REGISTRY"
 
 COPY client/ ./client/
 # Vite's outDir is ../server/internal/web/dist, so this writes into the path
@@ -18,6 +23,13 @@ RUN cd client && npm run build
 # --- the binary -------------------------------------------------------------
 FROM golang:1.26-alpine AS server
 WORKDIR /src
+
+# Same bargain as NPM_REGISTRY above. A mirror that does not carry the
+# checksum database needs GOSUMDB=off alongside it, which is why it is an
+# argument and not a hardcoded default.
+ARG GOPROXY=https://proxy.golang.org,direct
+ARG GOSUMDB=sum.golang.org
+ENV GOPROXY=$GOPROXY GOSUMDB=$GOSUMDB
 
 COPY server/go.mod server/go.sum ./server/
 RUN cd server && go mod download

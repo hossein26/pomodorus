@@ -23,5 +23,8 @@ docs
 .claude
 *.md
 
+# The stack that runs the image, not anything the image is built from.
+deploy
+
 .DS_Store
 **/.DS_Store

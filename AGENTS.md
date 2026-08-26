@@ -16,7 +16,9 @@ not follow patterns from that tree; it survives only as the design reference.
 | `docs/design-tokens.md` | The exact design values. Read before writing UI. |
 | `docs/reference/` | Screenshots of v1 — the pixel target. |
 | `docs/adr/` | Why the architecture is the way it is. |
-| `docs/deploy-liara.md` | How it is deployed, and what must not change. |
+| `docs/deploy-liara.md` | How it is deployed on Liara, and what must not change. |
+| `docs/deploy-vps.md` | How it is deployed on an owned Linux box, and how that box is hardened. |
+| `deploy/` | The production stack for that box: compose file, Caddyfile, backup script. |
 | `docs/agents/` | How the engineering skills read this repo. |
 
 ## Agent skills
