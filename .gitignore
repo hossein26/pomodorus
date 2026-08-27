@@ -22,3 +22,10 @@ playwright-report/
 
 # TypeScript incremental build state
 *.tsbuildinfo
+
+# Deployment runbooks. They describe how the production host is configured —
+# the firewall rules, the fail2ban thresholds, the hostname, the DNS topology —
+# and this repository is public. They are kept on disk and deliberately not
+# tracked. Move them to a private repo if more than one person needs them.
+docs/deploy-vps.md
+docs/liara-email.md

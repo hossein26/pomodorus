@@ -81,11 +81,16 @@ func (s *Server) verifyCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, user, err := s.auth.Verify(ctx, body.Email, body.Code)
+	token, user, err := s.auth.Verify(ctx, body.Email, body.Code, s.clientIP(r))
 	switch {
 	case err == nil:
 	case errors.Is(err, auth.ErrInvalidEmail):
 		s.writeError(w, http.StatusBadRequest, "invalid_email")
+		return
+	case errors.Is(err, auth.ErrRateLimited):
+		// Same code and status as the request endpoint, so the client already
+		// has a sentence for it.
+		s.writeError(w, http.StatusTooManyRequests, "rate_limited")
 		return
 	case errors.Is(err, auth.ErrBadCode):
 		// One error for wrong, expired, already used and out of attempts:

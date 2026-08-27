@@ -51,9 +51,38 @@ const (
 	// Rate limits. Per address, so a slow mail server is not a dead end but a
 	// mailbox cannot be flooded; per IP, so one host cannot walk a list of
 	// addresses.
+	//
+	// These are deliberately tight, and they can be: a session lasts ninety
+	// days of disuse, so asking for a code is a rare event even for a daily
+	// user. The usual argument against a low per-IP limit is carrier-grade NAT
+	// — Iranian mobile networks put thousands of people behind one address —
+	// but thousands of people who each sign in twice a year do not collide
+	// inside a fifteen minute window.
 	RateWindow       = 15 * time.Minute
-	MaxCodesPerEmail = 5
-	MaxCodesPerIP    = 20
+	MaxCodesPerEmail = 3
+	MaxCodesPerIP    = 8
+
+	// A ceiling on the whole server, because the limits above multiply. A
+	// hundred addresses at three codes each is three hundred emails from three
+	// hundred different IPs, every one of them inside its own allowance, and
+	// the mail plan permits five hundred a day. So the cheapest attack on this
+	// app was never breaking into an account: it was spending the mail quota
+	// until nobody can log in, at no cost to the attacker.
+	//
+	// Set below the plan so the quota is never what runs out first — hitting
+	// this limit is recoverable and visible, hitting Liara's is neither.
+	GlobalWindowHour = time.Hour
+	MaxCodesPerHour  = 60
+	GlobalWindowDay  = 24 * time.Hour
+	MaxCodesPerDay   = 300
+
+	// Verifying is cheap to send and not cheap to answer: a database read per
+	// attempt, on an endpoint that requires no session. This is not what stops
+	// guessing — MaxAttempts does, by destroying the code — it is what stops
+	// the endpoint being free to hammer.
+	VerifyWindow        = 15 * time.Minute
+	MaxVerifiesPerIP    = 15
+	MaxVerifiesPerEmail = 10
 )
 
 // The errors a caller has to tell apart. Everything about a code that failed —
@@ -66,6 +95,10 @@ var (
 	ErrNoSession    = errors.New("auth: no session")
 )
 
+// globalKey is the single key the server-wide throttles are counted under. The
+// throttle type is keyed because most of its uses are; this one is not.
+const globalKey = "server"
+
 type Service struct {
 	q     *db.Queries
 	clock clock.Clock
@@ -76,6 +109,13 @@ type Service struct {
 	// never persisted — an in-flight code stops working across a restart,
 	// which costs one resend and buys one less secret to manage.
 	secret []byte
+
+	// In-memory limits, keyed as their names say. See throttle.go for why
+	// these are not database counts like the two above.
+	globalHour  *throttle
+	globalDay   *throttle
+	verifyIP    *throttle
+	verifyEmail *throttle
 }
 
 func NewService(q *db.Queries, c clock.Clock, m mailer.Mailer) *Service {
@@ -85,7 +125,13 @@ func NewService(q *db.Queries, c clock.Clock, m mailer.Mailer) *Service {
 		// server that cannot generate a secret must not serve logins.
 		panic("auth: no randomness available: " + err.Error())
 	}
-	return &Service{q: q, clock: c, mail: m, secret: secret}
+	return &Service{
+		q: q, clock: c, mail: m, secret: secret,
+		globalHour:  newThrottle(GlobalWindowHour, MaxCodesPerHour),
+		globalDay:   newThrottle(GlobalWindowDay, MaxCodesPerDay),
+		verifyIP:    newThrottle(VerifyWindow, MaxVerifiesPerIP),
+		verifyEmail: newThrottle(VerifyWindow, MaxVerifiesPerEmail),
+	}
 }
 
 // RequestCode mints a code for the address and mails it.
@@ -100,6 +146,16 @@ func (s *Service) RequestCode(ctx context.Context, address string, from netip.Ad
 	}
 	now := s.clock.Now()
 	since := ts(now.Add(-RateWindow))
+
+	// The global ceiling is checked first and answered from memory, because
+	// under a flood the cheapest thing this server can do is say no without
+	// touching Postgres — the queries below are exactly what a flood is trying
+	// to make it spend. Checked but not consumed here: budget is spent when a
+	// mail is actually sent, further down, so a refused request never eats the
+	// allowance of a real one.
+	if s.globalHour.remaining(globalKey, now) <= 0 || s.globalDay.remaining(globalKey, now) <= 0 {
+		return ErrRateLimited
+	}
 
 	perEmail, err := s.q.CountCodesForEmail(ctx, db.CountCodesForEmailParams{Email: email, CreatedAt: since})
 	if err != nil {
@@ -143,6 +199,12 @@ func (s *Service) RequestCode(ctx context.Context, address string, from netip.Ad
 		return fmt.Errorf("create code: %w", err)
 	}
 
+	// Spent here rather than at the top: everything above can still refuse, and
+	// a refusal that consumed budget would let an attacker exhaust the day
+	// without a single mail leaving the building.
+	s.globalHour.allow(globalKey, now)
+	s.globalDay.allow(globalKey, now)
+
 	return s.mail.Send(ctx, codeMessage(email, code))
 }
 
@@ -151,12 +213,24 @@ func (s *Service) RequestCode(ctx context.Context, address string, from netip.Ad
 //
 // The returned token is the only time it exists in plaintext; the caller puts
 // it in a cookie and the database keeps a hash.
-func (s *Service) Verify(ctx context.Context, address, code string) (string, db.User, error) {
+func (s *Service) Verify(ctx context.Context, address, code string, from netip.Addr) (string, db.User, error) {
 	email, err := NormalizeEmail(address)
 	if err != nil {
 		return "", db.User{}, err
 	}
 	now := s.clock.Now()
+
+	// Guessing is already bounded by MaxAttempts, which destroys the code
+	// rather than merely rejecting it. These limits are about the endpoint, not
+	// the code: it needs no session, does a database read per call, and had
+	// nothing at all in front of it. Keyed by address as well as by source, so
+	// one address cannot be worked on from many hosts.
+	if from.IsValid() && !s.verifyIP.allow(from.String(), now) {
+		return "", db.User{}, ErrRateLimited
+	}
+	if !s.verifyEmail.allow(email, now) {
+		return "", db.User{}, ErrRateLimited
+	}
 
 	live, err := s.q.LiveCodeForEmail(ctx, db.LiveCodeForEmailParams{Email: email, ExpiresAt: ts(now)})
 	if errors.Is(err, pgx.ErrNoRows) {

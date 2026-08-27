@@ -69,6 +69,7 @@ alternative is a schema change, not a deploy setting.
 
 Login is an email OTP, so this is not optional, and it is the part most likely
 to disappoint — a code that lands in spam is a login that does not work.
+The short version is below.
 
 1. Console → **ایمیل سرور** → create one on your domain.
 2. Add the DNS records it asks for (SPF, DKIM, DMARC) and wait for them to go

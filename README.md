@@ -59,17 +59,18 @@ On Liara, with managed Postgres and a managed email server beside it:
 liara deploy   # or: make deploy
 ```
 
-On a Linux box you own, as three containers — Postgres, the app, and Caddy
-terminating TLS — described by `deploy/docker-compose.prod.yml`:
+On a Linux box you own, as containers described by
+`deploy/docker-compose.prod.yml`:
 
 ```bash
-docker compose -f deploy/docker-compose.prod.yml up -d --build
+docker compose -f deploy/docker-compose.prod.yml build
+docker compose -f deploy/docker-compose.prod.yml up -d
 ```
 
-Step by step, including the parts that are not obvious — port 587 and not 465,
-the `citext` extension, the permanent VAPID keypair, why this runs on one
-instance, and why Docker publishing a port ignores your firewall — see
-`docs/deploy-liara.md` and `docs/deploy-vps.md`.
+Step by step for Liara, including the parts that are not obvious — port 587 and
+not 465, the `citext` extension, the permanent VAPID keypair, and why this runs
+on one instance — see `docs/deploy-liara.md`. The runbook for the self-hosted
+deployment is not in this repository.
 
 ## Testing
 
