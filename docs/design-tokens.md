@@ -130,6 +130,19 @@ never on the whole badge while running, only on the icon. The inversion is
 intact, and the running timer gets the glance-ability it had. Keep the split:
 icon while running, whole link while ringing.
 
+**Login code field** — six `InputOTPSlot` boxes, `h-10 w-10`, sharing borders
+(`border-y border-r`, `first:border-l`) rather than shadcn's rounded end-caps,
+because nothing here is rounded. The row is wrapped in `dir="ltr"`: a code is
+read off a screen left to right and typed the same way, and `dir` passed to
+`InputOTP` lands on its hidden input rather than the row, which then inherits
+the page's rtl and fills backwards.
+
+**Toasts** — Sonner, top-centre, `dir="rtl"`. Its defaults are rounded, shadowed
+and separately themed, so the wrapper in `components/ui/sonner.tsx` overrides
+all three plus the font: Sonner sets its own `font-family` on the toast, and
+without `!font-sans` the Persian falls back to the system face. The «کد رفت»
+notice is a toast rather than a panel on the page.
+
 **Page padding** — `p-6` is the standard page inset; the timer uses
 `p-4 sm:p-6`.
 
@@ -157,9 +170,10 @@ Clocks are deliberately **not** `font-mono`. Tailwind's mono stack is Latin —
 it has no Persian digit glyphs, so every numeral fell through it to whatever
 Arabic face the system happened to offer, and the clock rendered in a different
 typeface from the words beside it. The numerals belong in Peyda like everything
-else. `font-mono` survives in exactly one place, the login code field, where it
-is correct for the opposite reason: that code is *typed* and stays in ASCII, so
-it must not be drawn by a FaNum font at all.
+else. `font-mono` survives in exactly one place, the login code field — now the six
+`InputOTPSlot` boxes — where it is correct for the opposite reason: that code
+is *typed* and stays in ASCII, so it must not be drawn by a FaNum font at all.
+Drop it and the mail says `123456` while the boxes answer «۱۲۳۴۵۶».
 
 ## Numerals and dates
 

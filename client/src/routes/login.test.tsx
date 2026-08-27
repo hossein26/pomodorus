@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { copy } from "@/lib/copy";
+import { Toaster } from "@/components/ui/sonner";
 import { LoginRoute } from "@/routes/login";
 import { renderAt } from "@/test/render";
 
@@ -67,13 +68,34 @@ describe("the login screen", () => {
 
   it("moves to the code step once the address is sent", async () => {
     server({ "/api/auth/request-code": ok });
-    renderAt(<LoginRoute />, { path: "/login" });
+    renderAt(
+      <>
+        <Toaster />
+        <LoginRoute />
+      </>,
+      { path: "/login" },
+    );
 
     await submitEmail();
 
     expect(await screen.findByLabelText(copy.login.code)).toBeTruthy();
-    // The address is repeated back, because a typo is invisible otherwise.
-    expect(screen.getByText(/yazdan@example\.com/)).toBeTruthy();
+    // The address is repeated back — in a toast now rather than a panel on the
+    // page, but still repeated back, because a typo is invisible otherwise.
+    expect(await screen.findByText(/yazdan@example\.com/)).toBeTruthy();
+  });
+
+  it("takes the code in six boxes, one per digit", async () => {
+    server({ "/api/auth/request-code": ok });
+    renderAt(<LoginRoute />, { path: "/login" });
+
+    await submitEmail();
+    await screen.findByLabelText(copy.login.code);
+
+    // Six, because the code is six digits — a seventh box would be a field
+    // that cannot be filled, and five would silently truncate a paste.
+    expect(
+      document.querySelectorAll("[data-slot='input-otp-slot']"),
+    ).toHaveLength(6);
   });
 
   it("shows a spinner and a waiting label while it submits", async () => {

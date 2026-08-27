@@ -1,10 +1,15 @@
 import { useState, type FormEvent } from "react";
-import { ArrowRight, KeyRound } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { Link, useNavigate } from "react-router";
+import { toast } from "sonner";
 
 import { Failure } from "@/components/failure";
 import { SubmitButton } from "@/components/submit-button";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+} from "@/components/ui/input-otp";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { messageFor, post, type ServerTimed } from "@/lib/api";
@@ -80,6 +85,7 @@ function EmailStep({
       await post<ServerTimed & { sent: boolean }>("/api/auth/request-code", {
         email,
       });
+      announceSent(email);
       onSent(email);
     } catch (failure) {
       setError(messageFor(failure));
@@ -119,23 +125,26 @@ function EmailStep({
 }
 
 /**
- * «کد رفت …» with the address set apart from the sentence around it.
+ * «کد رفت …» as a toast, with the address set apart from the sentence.
  *
  * It cannot go through `t`, which returns a string: the address is Latin and
  * needs its own font and direction, and the UI font would otherwise draw the
  * digits in it as Persian numerals — `yazdan2000@…` reading `yazdan۲۰۰۰@…`.
+ * Sonner takes a node here, so the span survives.
  */
-function SentTo({ email }: { email: string }) {
+function announceSent(email: string) {
   const [before = "", after = ""] = copy.login.sentBody.split("{email}");
-  return (
-    <>
-      {before}
-      <span dir="ltr" className="font-latin">
-        {email}
-      </span>
-      {after}
-    </>
-  );
+  toast(copy.login.sentTitle, {
+    description: (
+      <>
+        {before}
+        <span dir="ltr" className="font-latin">
+          {email}
+        </span>
+        {after}
+      </>
+    ),
+  });
 }
 
 function CodeStep({
@@ -176,6 +185,7 @@ function CodeStep({
     setResending(true);
     try {
       await post("/api/auth/request-code", { email });
+      announceSent(email);
       // The old code stops working the moment a new one is sent, so anything
       // half-typed is now wrong.
       setCode("");
@@ -188,33 +198,41 @@ function CodeStep({
 
   return (
     <div className="space-y-4">
-      <Alert>
-        <KeyRound />
-        <AlertTitle>{copy.login.sentTitle}</AlertTitle>
-        <AlertDescription>
-          <SentTo email={email} />
-        </AlertDescription>
-      </Alert>
-
       <form onSubmit={submit} className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="code">{copy.login.code}</Label>
-          <Input
-            id="code"
-            name="code"
-            // A code is typed, not read: it stays in ASCII digits, unlike
-            // every other number in the app. inputMode gets a phone's numeric
-            // keypad without refusing a paste.
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            value={code}
-            onChange={(event) => setCode(enDigits(event.target.value.trim()))}
-            autoFocus
-            required
-            maxLength={6}
-            dir="ltr"
-            className="text-center font-mono tracking-[0.5em]"
-          />
+          {/* The wrapper carries dir, not the field. A code is read off a
+              screen left to right and typed the same way, so box one has to be
+              the leftmost — and `dir` passed to InputOTP lands on its hidden
+              input, never on the row of boxes, which then inherits the page's
+              rtl and fills backwards: type 123456, read 654321.
+
+              enDigits on the way in because a code stays in ASCII digits,
+              unlike every other number in the app — a phone with a Persian
+              keypad would otherwise send «۱۲۳۴۵۶», which is not the code the
+              server hashed. */}
+          <div dir="ltr">
+            <InputOTP
+              id="code"
+              name="code"
+              maxLength={6}
+              value={code}
+              onChange={(next) => setCode(enDigits(next))}
+              autoFocus
+              containerClassName="justify-center"
+            >
+              <InputOTPGroup>
+                {[0, 1, 2, 3, 4, 5].map((slot) => (
+                  // font-mono, which design-tokens.md allows here and nowhere
+                  // else: Peyda is a FaNum face and draws ASCII digits as
+                  // Persian numerals, so the mail would say 123456 and these
+                  // boxes would answer ۱۲۳۴۵۶. The code is retyped, not read,
+                  // and it has to look like the thing being retyped.
+                  <InputOTPSlot key={slot} index={slot} className="font-mono" />
+                ))}
+              </InputOTPGroup>
+            </InputOTP>
+          </div>
           <p className="text-xs text-muted-foreground">{copy.login.codeHint}</p>
         </div>
 
@@ -247,4 +265,3 @@ function CodeStep({
     </div>
   );
 }
-

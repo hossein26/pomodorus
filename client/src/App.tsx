@@ -3,6 +3,7 @@ import { Route, Routes } from "react-router";
 import { Alarm } from "@/components/alarm";
 import { NavBar } from "@/components/nav-bar";
 import { RequireHandle } from "@/components/require-handle";
+import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, type AuthValue } from "@/lib/auth";
 import { SessionProvider, type SessionValue } from "@/lib/session";
@@ -32,6 +33,10 @@ export function App({
     <AuthProvider value={auth}>
       <SessionProvider value={session}>
         <TooltipProvider>
+          {/* Outside the frame on purpose: the toaster portals to the body,
+              and nesting it inside a `max-w-xl overflow-x-hidden` column would
+              clip it. Direction and face it inherits from <html>. */}
+          <Toaster />
           <div className={FRAME}>
             {/* Above the router, because the bell is: a pomodoro that ends
                 while you are on the landing page still has to reach you. */}
