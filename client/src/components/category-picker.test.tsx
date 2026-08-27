@@ -264,4 +264,46 @@ describe("the category picker", () => {
 
     expect(screen.getByLabelText(copy.categories.namePlaceholder)).toBeTruthy();
   });
+
+  /**
+   * Every placeholder in the app is Persian, and these two fields are the only
+   * ones that have one at all — login and the handle claim are labelled
+   * instead. A field that opts out of the page's direction shows its
+   * placeholder against the wrong edge with the caret in front of it, which is
+   * what `dir="auto"` used to do here: it reads the direction off the value,
+   * and an empty value has nothing to read.
+   */
+  describe("direction", () => {
+    it("opens the new-task field the way the page reads", async () => {
+      const { user } = renderPicker([]);
+
+      await openPicker(user);
+
+      const field = screen.getByLabelText(copy.categories.namePlaceholder);
+      expect(field.getAttribute("dir")).toBe("rtl");
+    });
+
+    it("renames in the same direction it creates in", async () => {
+      const { user } = renderPicker([درس]);
+
+      await openPicker(user);
+      await user.click(
+        await screen.findByRole("button", {
+          name: t(copy.categories.editAria, { name: "درس" }),
+        }),
+      );
+
+      const field = screen.getByLabelText(copy.categories.namePlaceholder);
+      expect(field.getAttribute("dir")).toBe("rtl");
+    });
+
+    it("leaves the search field in the page's direction rather than flipping it", async () => {
+      const { user } = renderPicker([درس]);
+
+      await openPicker(user);
+
+      const search = screen.getByPlaceholderText(copy.categories.search);
+      expect(search.getAttribute("dir")).not.toBe("ltr");
+    });
+  });
 });

@@ -317,7 +317,14 @@ function CreateView({
           aria-label={copy.categories.namePlaceholder}
           placeholder={copy.categories.namePlaceholder}
           value={name}
-          dir="auto"
+          // rtl, not auto. `dir="auto"` reads the direction off the *value*,
+          // and an empty value has no strong character to read — so the field
+          // starts out left-to-right and the Persian placeholder sits against
+          // the wrong edge with the caret in front of it. This is a Persian
+          // app: the field opens the way the rest of the page reads, and a
+          // Latin task name typed into it still lays out correctly, because
+          // bidi handles a left-to-right run inside a right-to-left field.
+          dir="rtl"
           maxLength={40}
           onChange={(event) => {
             setName(event.target.value);
@@ -405,7 +412,9 @@ function EditView({
           // things answer to one name.
           aria-label={copy.categories.namePlaceholder}
           value={name}
-          dir="auto"
+          // Same field as the one above, so the same direction: renaming a
+          // task must not lay it out differently from creating it.
+          dir="rtl"
           maxLength={40}
           onChange={(event) => {
             setName(event.target.value);
