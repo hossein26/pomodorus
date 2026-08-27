@@ -130,7 +130,9 @@ never on the whole badge while running, only on the icon. The inversion is
 intact, and the running timer gets the glance-ability it had. Keep the split:
 icon while running, whole link while ringing.
 
-**Login code field** — six `InputOTPSlot` boxes, `h-10 w-10`, sharing borders
+**Login code field** — six `InputOTPSlot` boxes at `h-12 flex-1` inside a
+`w-full` group, so the row fills the column and the boxes divide it; six fixed
+squares centred in a 20rem column read as unfinished. They share borders
 (`border-y border-r`, `first:border-l`) rather than shadcn's rounded end-caps,
 because nothing here is rounded. The row is wrapped in `dir="ltr"`: a code is
 read off a screen left to right and typed the same way, and `dir` passed to
@@ -142,6 +144,12 @@ and separately themed, so the wrapper in `components/ui/sonner.tsx` overrides
 all three plus the font: Sonner sets its own `font-family` on the toast, and
 without `!font-sans` the Persian falls back to the system face. The «کد رفت»
 notice is a toast rather than a panel on the page.
+
+**Login code step** — the address is repeated in a bordered banner above the
+form (`border border-border bg-card`, muted, centred, the address itself
+`dir="ltr" font-latin`). It is not decoration: the toast dismisses itself, and
+there is no way back to the address field from here, so the banner is the only
+thing on the screen that can reveal a code sent to a mistyped inbox.
 
 **Page padding** — `p-6` is the standard page inset; the timer uses
 `p-4 sm:p-6`.

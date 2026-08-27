@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -79,9 +79,21 @@ describe("the login screen", () => {
     await submitEmail();
 
     expect(await screen.findByLabelText(copy.login.code)).toBeTruthy();
-    // The address is repeated back — in a toast now rather than a panel on the
-    // page, but still repeated back, because a typo is invisible otherwise.
-    expect(await screen.findByText(/yazdan@example\.com/)).toBeTruthy();
+    // Twice on purpose: the toast says it went, the banner keeps saying where.
+    // A toast dismisses itself, and with no way back to the address field the
+    // banner is the only thing left that can reveal a typo.
+    expect(await screen.findAllByText(/yazdan@example\.com/)).toHaveLength(2);
+  });
+
+  it("keeps the address on the code step after the toast has gone", async () => {
+    server({ "/api/auth/request-code": ok });
+    renderAt(<LoginRoute />, { path: "/login" });
+
+    await submitEmail();
+    await screen.findByLabelText(copy.login.code);
+
+    // No Toaster is mounted here, so this is the banner and nothing else.
+    expect(screen.getByText("yazdan@example.com")).toBeTruthy();
   });
 
   it("takes the code in six boxes, one per digit", async () => {
@@ -174,32 +186,6 @@ describe("the login screen", () => {
     await submitEmail();
 
     expect(await screen.findByText(copy.offline.needInternet)).toBeTruthy();
-  });
-
-  it("lets a wrong address be corrected without a reload", async () => {
-    server({ "/api/auth/request-code": ok });
-    renderAt(<LoginRoute />, { path: "/login" });
-
-    const user = await submitEmail();
-    await user.click(
-      await screen.findByRole("button", { name: copy.login.changeEmail }),
-    );
-
-    expect(screen.getByLabelText(copy.login.email)).toBeTruthy();
-  });
-
-  it("can ask for another code when the first does not arrive", async () => {
-    const fetched = vi.fn(() => Promise.resolve(ok()));
-    vi.stubGlobal("fetch", fetched);
-    renderAt(<LoginRoute />, { path: "/login" });
-
-    const user = await submitEmail();
-    await user.type(await screen.findByLabelText(copy.login.code), "12");
-    await user.click(screen.getByRole("button", { name: copy.login.resend }));
-
-    await waitFor(() => expect(fetched).toHaveBeenCalledTimes(2));
-    // Anything half-typed is now a code that no longer exists.
-    expect(screen.getByLabelText(copy.login.code)).toHaveProperty("value", "");
   });
 
   it("keeps the code in ASCII digits, since it is typed rather than read", async () => {

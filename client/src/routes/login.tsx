@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 
 import { Failure } from "@/components/failure";
+import { Button } from "@/components/ui/button";
 import { SubmitButton } from "@/components/submit-button";
 import {
   InputOTP,
@@ -47,18 +48,17 @@ export function LoginRoute() {
           {sentTo === null ? (
             <EmailStep email={email} onEmail={setEmail} onSent={setSentTo} />
           ) : (
-            <CodeStep email={sentTo} onStartOver={() => setSentTo(null)} />
+            <CodeStep email={sentTo} />
           )}
 
           {/* Without this a signed-out visitor has no way back to the landing
               but the browser's own. */}
-          <Link
-            to="/"
-            className="flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <ArrowRight className="size-3" />
-            {copy.login.backHome}
-          </Link>
+          <Button asChild variant="ghost" size="sm" className="w-full">
+            <Link to="/" className="gap-1 text-xs">
+              <ArrowRight className="size-3" />
+              {copy.login.backHome}
+            </Link>
+          </Button>
         </div>
       </div>
     </main>
@@ -147,17 +147,10 @@ function announceSent(email: string) {
   });
 }
 
-function CodeStep({
-  email,
-  onStartOver,
-}: {
-  email: string;
-  onStartOver: () => void;
-}) {
+function CodeStep({ email }: { email: string }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const [resending, setResending] = useState(false);
   const auth = useAuth();
   const navigate = useNavigate();
 
@@ -180,24 +173,18 @@ function CodeStep({
     }
   }
 
-  async function resend() {
-    setError(null);
-    setResending(true);
-    try {
-      await post("/api/auth/request-code", { email });
-      announceSent(email);
-      // The old code stops working the moment a new one is sent, so anything
-      // half-typed is now wrong.
-      setCode("");
-    } catch (failure) {
-      setError(messageFor(failure));
-    } finally {
-      setResending(false);
-    }
-  }
-
   return (
     <div className="space-y-4">
+      {/* The address, written down. The toast that announced it dismisses
+          itself after a few seconds, and a mistyped address is invisible
+          unless it is somewhere that stays — this is the only thing on the
+          screen that can tell you the code went to the wrong inbox. */}
+      <p className="border border-border bg-card px-3 py-2 text-center text-xs text-muted-foreground">
+        <span dir="ltr" className="font-latin">
+          {email}
+        </span>
+      </p>
+
       <form onSubmit={submit} className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="code">{copy.login.code}</Label>
@@ -219,16 +206,23 @@ function CodeStep({
               value={code}
               onChange={(next) => setCode(enDigits(next))}
               autoFocus
-              containerClassName="justify-center"
+              containerClassName="w-full"
             >
-              <InputOTPGroup>
+              {/* The row fills the column and the boxes divide it, rather than
+                  six fixed squares floating in the middle of it: at this width
+                  a centred `w-10` cluster reads as unfinished. */}
+              <InputOTPGroup className="w-full">
                 {[0, 1, 2, 3, 4, 5].map((slot) => (
                   // font-mono, which design-tokens.md allows here and nowhere
                   // else: Peyda is a FaNum face and draws ASCII digits as
                   // Persian numerals, so the mail would say 123456 and these
                   // boxes would answer ۱۲۳۴۵۶. The code is retyped, not read,
                   // and it has to look like the thing being retyped.
-                  <InputOTPSlot key={slot} index={slot} className="font-mono" />
+                  <InputOTPSlot
+                    key={slot}
+                    index={slot}
+                    className="h-12 w-auto flex-1 font-mono text-lg"
+                  />
                 ))}
               </InputOTPGroup>
             </InputOTP>
@@ -244,24 +238,6 @@ function CodeStep({
           pendingLabel={copy.login.signingIn}
         />
       </form>
-
-      <div className="flex items-center justify-between text-xs">
-        <button
-          type="button"
-          onClick={() => void resend()}
-          disabled={resending}
-          className="text-muted-foreground hover:text-foreground disabled:opacity-50"
-        >
-          {resending ? copy.login.sending : copy.login.resend}
-        </button>
-        <button
-          type="button"
-          onClick={onStartOver}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          {copy.login.changeEmail}
-        </button>
-      </div>
     </div>
   );
 }
