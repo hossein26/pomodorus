@@ -55,15 +55,34 @@ export function LoginRoute() {
               <CodeStep email={sentTo} />
             )}
 
-            {/* Without this a signed-out visitor has no way back to the landing
-                but the browser's own. Same size and width as the submit above
-                it: they are a pair, and a smaller one reads as a footnote. */}
-            <Button asChild variant="ghost" className="w-full">
-              <Link to="/">
+            {/* One button, two jobs, because at each step there is exactly one
+                place worth going back to. On the address step that is the
+                landing, which a signed-out visitor otherwise reaches only by
+                the browser's own back. On the code step it is the address
+                itself — the toast naming it has gone by then, and this is the
+                only way to fix a typo without reloading.
+
+                Same size and width as the submit above it either way: they are
+                a pair, and a smaller one reads as a footnote. */}
+            {sentTo === null ? (
+              <Button asChild variant="ghost" className="w-full">
+                <Link to="/">
+                  <ArrowRight className="size-4" />
+                  {copy.login.backHome}
+                </Link>
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                className="w-full"
+                // Unmounting CodeStep is what clears the half-typed code: it
+                // belongs to a code that is about to be superseded anyway.
+                onClick={() => setSentTo(null)}
+              >
                 <ArrowRight className="size-4" />
-                {copy.login.backHome}
-              </Link>
-            </Button>
+                {copy.login.backToEmail}
+              </Button>
+            )}
           </div>
         </div>
       </div>

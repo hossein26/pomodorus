@@ -90,6 +90,27 @@ describe("the login screen", () => {
     expect(await screen.findByText(/yazdan@example\.com/)).toBeTruthy();
   });
 
+  it("leads home from the address step and back to the address from the code step", async () => {
+    server({ "/api/auth/request-code": ok });
+    renderAt(<LoginRoute />, { path: "/login" });
+
+    // Step one: the only place worth going is out.
+    expect(
+      screen.getByRole("link", { name: copy.login.backHome }),
+    ).toHaveProperty("pathname", "/");
+
+    const user = await submitEmail();
+    await screen.findByLabelText(copy.login.code);
+    expect(screen.queryByText(copy.login.backHome)).toBeNull();
+
+    // Step two: the toast naming the address has gone, so this is the only way
+    // to fix a typo without reloading.
+    await user.click(
+      screen.getByRole("button", { name: copy.login.backToEmail }),
+    );
+    expect(screen.getByLabelText(copy.login.email)).toBeTruthy();
+  });
+
   it("holds that toast past Sonner's own default, since it is the only sighting", async () => {
     server({ "/api/auth/request-code": ok });
     renderAt(
