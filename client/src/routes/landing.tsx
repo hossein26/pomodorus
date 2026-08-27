@@ -70,7 +70,13 @@ function Hero() {
       {/* Opaque at the bottom, clear at the top: the type sits in the band
           where the gradient can carry it whatever the image is doing. */}
       <div className="absolute inset-0 z-5 flex items-end justify-center bg-linear-to-t from-background via-background/50 to-transparent px-6 pb-4">
-        <h1 className="text-center text-3xl font-light tracking-widest uppercase text-yellow-600 lg:text-6xl">
+        {/* Grows at every breakpoint the pitch below it grows at. It used to
+            hold text-3xl from a phone all the way to lg while the pitch went
+            sm→base→lg underneath it, so the two converged in the middle of the
+            range: 2.1× the pitch on a phone, 1.67× at 768. The wordmark has to
+            stay the largest thing on the screen at every width, not just the
+            two ends of it. */}
+        <h1 className="text-center text-4xl font-light tracking-widest uppercase text-yellow-600 sm:text-5xl lg:text-6xl">
           {copy.landing.tagline}
         </h1>
       </div>

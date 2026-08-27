@@ -156,6 +156,20 @@ default `h-10`, one `space-y-4` apart. The link is `ghost`. A smaller or
 tighter-set second button reads as a footnote rather than the other half of a
 choice.
 
+**Feed rows are all one height, and it is not the line-height.** A real row
+puts the Latin handle and the Persian task on one line, and a line box grows to
+fit the ascent and descent of every font in it — two faces, 23.3px where one
+face gives 21.3. So a row with no handle in it (the skeleton, the "nobody is
+here" line) is two pixels shorter than a row with one, and the box resizes the
+moment somebody starts working. Both of those rows carry a `RowHeight`: two
+zero-width spaces, one per face, inside a *single* inline element so they share
+one line box. Two flex items would each get a line box of their own and the
+trick would not work.
+
+The loading state is that skeleton, not a blank row. A blank bordered box reads
+as an answer, so somebody appearing a moment later reads as the page changing
+its mind.
+
 **Page padding** — `p-6` is the standard page inset; the timer uses
 `p-4 sm:p-6`.
 
@@ -403,7 +417,8 @@ Deliberately almost none.
 - Progress bar: `transition-[width] duration-500 ease-linear`.
 - Running: `animate-pulse text-rose-500` on the NavBar badge's `Scan` icon.
 - Ring: `animate-pulse` on the bell and on the whole NavBar badge.
-- Skeletons: `animate-pulse`.
+- Skeletons: `animate-pulse`. The feed's loading row is one, sized to a real
+  row rather than to `text-sm`'s line-height — see below.
 - Day-detail panel and chart day changes cross-fade; the outgoing panel
   finishes leaving before the incoming one arrives, because the two differ in
   height with the category list.

@@ -2,6 +2,7 @@ import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Feed } from "@/components/feed";
+import { copy } from "@/lib/copy";
 import { renderAt } from "@/test/render";
 
 function server(entries: unknown[]) {
@@ -35,6 +36,29 @@ async function row() {
 
 beforeEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("before the server has answered", () => {
+  it("shows a skeleton rather than a blank box or a wrong answer", async () => {
+    // A request that never settles: this is the state the feed is in for the
+    // first moment of every visit.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise(() => {})),
+    );
+    const { container } = renderAt(<Feed />);
+
+    expect(container.querySelectorAll("[data-slot='skeleton']").length).toBe(2);
+    // "Nobody is here" is a claim, and it is not one this page can make yet.
+    expect(screen.queryByText(copy.feed.empty)).toBeNull();
+  });
+
+  it("says nobody is here only once the server has said so", async () => {
+    server([]);
+    renderAt(<Feed />);
+
+    expect(await screen.findByText(copy.feed.empty)).toBeTruthy();
+  });
 });
 
 /**
