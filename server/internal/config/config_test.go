@@ -108,6 +108,61 @@ func TestLoad(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "no proxy means the forwarded headers are read from nowhere",
+			env:  map[string]string{},
+			check: func(t *testing.T, c Config) {
+				if c.TrustedProxyHops != 0 {
+					t.Errorf("TrustedProxyHops = %d, want 0 with nothing in front", c.TrustedProxyHops)
+				}
+			},
+		},
+		{
+			name: "trusting the headers means one proxy unless told otherwise",
+			env:  map[string]string{"TRUST_PROXY_HEADERS": "1"},
+			check: func(t *testing.T, c Config) {
+				if c.TrustedProxyHops != 1 {
+					t.Errorf("TrustedProxyHops = %d, want 1", c.TrustedProxyHops)
+				}
+			},
+		},
+		{
+			name: "a CDN in front of the proxy is two hops",
+			env: map[string]string{
+				"TRUST_PROXY_HEADERS": "1",
+				"TRUSTED_PROXY_HOPS":  "2",
+			},
+			check: func(t *testing.T, c Config) {
+				if c.TrustedProxyHops != 2 {
+					t.Errorf("TrustedProxyHops = %d, want 2", c.TrustedProxyHops)
+				}
+			},
+		},
+		{
+			// It says the operator believes there is a proxy in front. Reading
+			// the peer address anyway would be the header silently ignored.
+			name:    "a hop count without trusting the headers is refused",
+			env:     map[string]string{"TRUSTED_PROXY_HOPS": "2"},
+			wantErr: true,
+		},
+		{
+			// "Trust the headers, but count back past nobody" is a request to
+			// read whatever the caller wrote.
+			name: "zero hops is refused",
+			env: map[string]string{
+				"TRUST_PROXY_HEADERS": "1",
+				"TRUSTED_PROXY_HOPS":  "0",
+			},
+			wantErr: true,
+		},
+		{
+			name: "a hop count that is not a number is refused",
+			env: map[string]string{
+				"TRUST_PROXY_HEADERS": "1",
+				"TRUSTED_PROXY_HOPS":  "one",
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -120,6 +175,7 @@ func TestLoad(t *testing.T) {
 			for _, k := range []string{
 				"ENV", "ADDR", "DATABASE_URL", "FAST_SESSIONS",
 				"VAPID_SUBJECT", "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY",
+				"TRUST_PROXY_HEADERS", "TRUSTED_PROXY_HOPS",
 			} {
 				if _, ok := tc.env[k]; !ok {
 					t.Setenv(k, "")

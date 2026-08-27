@@ -118,6 +118,22 @@ production, which is the point.
 The `envs` field of `liara.json` is deliberately unused: it is committed, and
 these are secrets.
 
+### If you put a CDN in front
+
+`TRUSTED_PROXY_HOPS` defaults to 1, which is right for Liara on its own: its
+router is the only thing between the caller and the app, so the rightmost
+entry of `X-Forwarded-For` is the one Liara wrote. The server reads the header
+from that end deliberately — each proxy appends what it saw, and the caller
+can only ever add entries on the left — so this holds whether Liara overwrites
+an incoming header or appends to it, and there is nothing about Liara's router
+that has to be verified for it to be safe.
+
+Putting a CDN in front (ArvanCloud, Cloudflare) adds a hop, and then the
+caller's own address is the *second* entry from the right. Set
+`TRUSTED_PROXY_HOPS=2` when you do. Leaving it at 1 means every request looks
+like it came from a CDN edge, and the whole internet shares a handful of login
+rate-limit buckets.
+
 ## 6. Deploy
 
 ```bash

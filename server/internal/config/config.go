@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -34,6 +35,25 @@ type Config struct {
 	// time. This is a fact about the deployment, not a security toggle — the
 	// unsafe direction is the one that needs saying out loud.
 	TrustProxyHeaders bool
+
+	// TrustedProxyHops is how many proxies stand between this server and the
+	// caller, and so how far from the *right* of X-Forwarded-For the caller's
+	// own address is. Zero when the headers are not trusted at all.
+	//
+	// It exists because "the first value" is not a safe way to read that
+	// header. Each proxy appends the address it saw, so the rightmost entry is
+	// the one written by the proxy nearest here and the leftmost is whatever
+	// the client typed. A proxy that overwrites the header leaves exactly one
+	// entry and the two readings agree; a proxy that appends leaves the
+	// client's invention in front of the real address, and reading from the
+	// left hands the rate limiter a bucket the caller chose. Counting from the
+	// right is correct under both, which is what makes this safe to deploy
+	// without first proving which kind of proxy is in front.
+	//
+	// One is the usual answer: a single reverse proxy terminating TLS. Two is
+	// a CDN in front of that proxy. Anything higher is unusual enough that it
+	// should be arrived at deliberately.
+	TrustedProxyHops int
 
 	// Where login codes are posted. Locally this is Mailpit; in production it
 	// is the host's own email service. The same client runs in both, so what
@@ -115,7 +135,39 @@ func Load() (Config, error) {
 	if err := c.checkVAPID(); err != nil {
 		return c, err
 	}
+	hops, err := trustedHops(c.TrustProxyHeaders)
+	if err != nil {
+		return c, err
+	}
+	c.TrustedProxyHops = hops
 	return c, nil
+}
+
+// trustedHops reads how many proxies to count back past, defaulting to the one
+// this deployment always has and refusing the combinations that cannot mean
+// anything.
+//
+// A hop count without TRUST_PROXY_HEADERS is refused rather than ignored: it
+// says the operator believes there is a proxy in front, and quietly reading
+// the peer address instead would be the header silently not being honoured.
+// Zero is refused for the same reason — "trust the headers, but count back
+// past nobody" is a request to read whatever the client wrote.
+func trustedHops(trusted bool) (int, error) {
+	raw := env("TRUSTED_PROXY_HOPS", "")
+	if !trusted {
+		if raw != "" {
+			return 0, fmt.Errorf("TRUSTED_PROXY_HOPS is set but TRUST_PROXY_HEADERS is not: the forwarded headers would be ignored")
+		}
+		return 0, nil
+	}
+	if raw == "" {
+		return 1, nil
+	}
+	hops, err := strconv.Atoi(raw)
+	if err != nil || hops < 1 {
+		return 0, fmt.Errorf("TRUSTED_PROXY_HOPS must be a positive integer, got %q", raw)
+	}
+	return hops, nil
 }
 
 // checkVAPID refuses the half-configured cases rather than letting them turn

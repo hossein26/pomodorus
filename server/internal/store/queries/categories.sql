@@ -27,3 +27,20 @@ RETURNING *;
 -- caller asked for a state, and the state is what it gets.
 UPDATE categories SET deleted_at = $3, updated_at = $3
 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL;
+
+-- name: CategoryRoom :one
+-- Whether there is room for another task, asked as one round trip.
+--
+-- Two questions rather than one, because creating is idempotent on the
+-- client-minted id: a retry of a create that already landed must still be
+-- answered with the row it made, even when the account is at its ceiling.
+-- `mine` is what tells a retry apart from a genuinely new task.
+--
+-- Tombstones are not counted. Deleting a task is meant to make room, and a
+-- ceiling that counted the ones already tidied away would be a ceiling on how
+-- many tasks somebody has ever had.
+SELECT
+    (SELECT count(*) FROM categories
+     WHERE categories.user_id = @owner AND categories.deleted_at IS NULL)::bigint AS live,
+    EXISTS (SELECT 1 FROM categories
+            WHERE categories.id = @wanted AND categories.user_id = @owner) AS mine;

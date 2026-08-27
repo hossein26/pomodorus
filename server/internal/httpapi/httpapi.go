@@ -23,8 +23,37 @@ import (
 	"github.com/yazdanctx/pomodorus/server/internal/live"
 	"github.com/yazdanctx/pomodorus/server/internal/mail"
 	"github.com/yazdanctx/pomodorus/server/internal/push"
+	"github.com/yazdanctx/pomodorus/server/internal/ratelimit"
 	"github.com/yazdanctx/pomodorus/server/internal/store/db"
 	"github.com/yazdanctx/pomodorus/server/internal/web"
+)
+
+// The deadlines this server is listened on with. They live here rather than in
+// cmd/server so that the test harness stands the server up in the same shape
+// the binary does, and so there is one place to read them.
+const (
+	// Long enough for a phone on a bad connection to finish its headers.
+	ReadHeaderTimeout = 10 * time.Second
+
+	// The whole request, headers and body together.
+	//
+	// readJSON already caps a body at 64 KB, but a size limit is not a time
+	// limit: a caller sending one byte a second is inside every bound the
+	// handlers have and still holds a connection and a goroutine indefinitely.
+	// Thirty seconds is far more than any real client needs for a few hundred
+	// bytes.
+	//
+	// It is safe for the WebSocket, which is why there is no WriteTimeout to
+	// match it. Both are deadlines on the underlying connection, and net/http
+	// clears them when the connection is hijacked for the upgrade
+	// (server.go, hijackLocked) — so what governs the socket afterwards is the
+	// write deadline in send() and the keepalive, which it sets for itself. A
+	// WriteTimeout would be no more dangerous, and is left off only because
+	// nothing here writes slowly enough to need one.
+	ReadTimeout = 30 * time.Second
+
+	// Between requests on a kept-alive connection.
+	IdleTimeout = 120 * time.Second
 )
 
 // Deps is everything the server does not construct for itself. The clock and
@@ -62,6 +91,13 @@ type Deps struct {
 	// push service, a network or a browser.
 	PushSender push.Sender
 
+	// MaxSockets is the ceiling on concurrent WebSocket connections, defaulting
+	// to maxOpenSockets. It is a fact about how much this process can carry
+	// rather than about the timer, so — like SocketPing — a test that wants to
+	// watch the ceiling turn somebody away turns it down instead of opening
+	// five thousand connections.
+	MaxSockets int
+
 	// PushDelay is how the notifier waits for a bell, defaulting to real time.
 	// It is the one thing in the app the injected clock cannot express — a
 	// fixed clock never arrives anywhere — so a test hands over a wait it
@@ -81,6 +117,18 @@ type Server struct {
 	client     fs.FS
 	mux        *http.ServeMux
 
+	// The mux with the response headers and the per-address backstop wrapped
+	// around it, built once so that serving a request is not building a handler
+	// chain.
+	handler http.Handler
+
+	// What one caller may cost. See limits.go for why these two are keyed
+	// differently, and why only one of them is tight.
+	writes     *ratelimit.Window
+	requests   *ratelimit.Window
+	sockets    openSockets
+	maxSockets int64
+
 	// The pending bells. Nil when this deployment cannot send any, which every
 	// call site treats as a Notifier that does nothing rather than branching.
 	push *push.Notifier
@@ -99,6 +147,8 @@ func New(deps Deps) *Server {
 		socketPing: deps.SocketPing,
 		client:     deps.Client,
 		mux:        http.NewServeMux(),
+		writes:     ratelimit.New(time.Minute, maxWritesPerMinute),
+		requests:   ratelimit.New(time.Minute, maxRequestsPerMinute),
 	}
 	if s.live == nil {
 		s.live = live.NewHub()
@@ -106,8 +156,13 @@ func New(deps Deps) *Server {
 	if s.socketPing <= 0 {
 		s.socketPing = DefaultSocketPing
 	}
+	s.maxSockets = int64(deps.MaxSockets)
+	if s.maxSockets <= 0 {
+		s.maxSockets = maxOpenSockets
+	}
 	s.push = newNotifier(deps, queries)
 	s.routes()
+	s.handler = s.hardened(s.limited(s.mux))
 	return s
 }
 
@@ -148,6 +203,16 @@ func (s *Server) Start(ctx context.Context) error {
 	if n := s.push.Pending(); n > 0 {
 		s.log.Info("push: rebuilt pending bells", "count", n)
 	}
+
+	// The other thing a boot is good for: throwing away the auth rows that can
+	// no longer mean anything. Logged rather than returned, because a table
+	// that did not get tidied is not a reason to refuse to serve — see
+	// auth.Sweep for why nothing here can affect an answer.
+	if swept, err := s.auth.Sweep(ctx); err != nil {
+		s.log.Error("sweep expired auth rows", "error", err)
+	} else if swept.Sessions > 0 || swept.Codes > 0 {
+		s.log.Info("swept expired auth rows", "sessions", swept.Sessions, "codes", swept.Codes)
+	}
 	return nil
 }
 
@@ -156,7 +221,7 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) Close() { s.push.Close() }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
+	s.handler.ServeHTTP(w, r)
 }
 
 func (s *Server) routes() {
@@ -255,15 +320,22 @@ func (s *Server) knownHandle(ctx context.Context, handle string) bool {
 // into a variable rather than calling it twice.
 func (s *Server) now() time.Time { return s.clock.Now() }
 
+// healthResponse is deliberately the smallest thing that answers the only
+// question asked of this endpoint: is this process up, and can it reach the
+// database. It is unauthenticated — the platform's health check runs as nobody
+// — so everything on it is something anybody may read.
+//
+// What used to be here and is not any more: the account count, and which
+// environment this is. Neither was ever read by the client or by the health
+// check, and both are the sort of thing that is only ever interesting to
+// somebody deciding whether this deployment is worth their time.
 type healthResponse struct {
 	OK bool `json:"ok"`
 	// The clock every client corrects against. The device's own clock is
 	// trusted to measure elapsed time and never to say what time it is, so
 	// every response that carries timestamps carries this too.
 	ServerNow int64  `json:"serverNow"`
-	Env       string `json:"env"`
 	Database  string `json:"database"`
-	Users     int64  `json:"users"`
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -273,18 +345,19 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	res := healthResponse{
 		OK:        true,
 		ServerNow: s.now().UnixMilli(),
-		Env:       s.cfg.Env,
 		Database:  "up",
 	}
-	users, err := s.q.CountUsers(ctx)
-	if err != nil {
+	// The probe is a real query rather than a ping, because "the pool has a
+	// connection" and "the database will answer" are different claims and only
+	// the second one is worth reporting. The number it comes back with is not
+	// published; reaching for it is the whole point.
+	if _, err := s.q.CountUsers(ctx); err != nil {
 		s.log.Error("health: database unreachable", "error", err)
 		res.OK = false
 		res.Database = "down"
 		writeJSON(w, http.StatusServiceUnavailable, res)
 		return
 	}
-	res.Users = users
 	writeJSON(w, http.StatusOK, res)
 }
 

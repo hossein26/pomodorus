@@ -74,5 +74,19 @@ WHERE token_hash = $1;
 -- name: DeleteAuthSession :exec
 DELETE FROM auth_sessions WHERE token_hash = $1;
 
--- name: DeleteExpiredAuthSessions :exec
+-- name: DeleteExpiredAuthSessions :execrows
+-- A session past its expiry is already refused by UserForSession, which bounds
+-- every read by expires_at. Deleting it is housekeeping rather than security:
+-- the row is dead weight in an index that every authenticated request touches.
 DELETE FROM auth_sessions WHERE expires_at <= $1;
+
+-- name: DeleteStaleLoginCodes :execrows
+-- A code far enough in the past to be no use to anybody.
+--
+-- The cutoff is not the code's own expiry. These rows are what the per-address
+-- and per-IP limits are counted from — that is why those limits survive a
+-- restart at all — so deleting one inside the rate window would hand back
+-- quota that was already spent. The caller passes a cutoff well behind both
+-- CodeTTL and RateWindow, and what is left is a table that does not grow
+-- forever.
+DELETE FROM login_codes WHERE created_at <= $1;

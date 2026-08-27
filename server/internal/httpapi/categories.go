@@ -22,6 +22,21 @@ const (
 	categoryNameMax = 40
 )
 
+// maxCategoriesPerUser is how many live tasks one account may keep.
+//
+// Far past any real task list — the picker is a thing you scroll, and nobody
+// scrolls a hundred of them — and finite because the id is minted by the
+// client, so nothing but this stops one account writing rows until the disk
+// is full.
+//
+// Refused rather than trimmed, which is the opposite of what the push
+// subscriptions do, and for a reason: a subscription is an address a device
+// hands over and can hand over again, while a task is something somebody wrote
+// with a history recorded against it. The cheap thing to throw away is the
+// address. Being told to tidy up is the right answer here, and deleting a task
+// makes room immediately because tombstones are not counted.
+const maxCategoriesPerUser = 100
+
 // category is the shape the client reads. The tombstone never crosses the
 // wire: a deleted category is simply not in the list.
 type category struct {
@@ -90,6 +105,10 @@ func (s *Server) createCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.spendWrite(w, user) {
+		return
+	}
+
 	var body createCategoryRequest
 	if err := readJSON(r, &body); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed_request")
@@ -110,6 +129,22 @@ func (s *Server) createCategory(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := timeout(r, 5*time.Second)
 	defer cancel()
+
+	// The ceiling, checked before the write because a task cannot be trimmed
+	// away afterwards the way a device's address can. A retry of a create that
+	// already landed is not a new task and is let through at the ceiling, which
+	// is what keeps this endpoint idempotent — the whole reason the id is
+	// minted by the client.
+	room, err := s.q.CategoryRoom(ctx, db.CategoryRoomParams{Owner: user.ID, Wanted: pgID(id)})
+	if err != nil {
+		s.log.Error("count categories", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "server_error")
+		return
+	}
+	if !room.Mine && room.Live >= maxCategoriesPerUser {
+		s.writeError(w, http.StatusConflict, "too_many_categories")
+		return
+	}
 
 	now := s.now()
 	row, err := s.q.CreateCategory(ctx, db.CreateCategoryParams{
@@ -144,6 +179,10 @@ func (s *Server) updateCategory(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.currentUser(r)
 	if !ok {
 		s.writeError(w, http.StatusUnauthorized, "not_signed_in")
+		return
+	}
+
+	if !s.spendWrite(w, user) {
 		return
 	}
 
@@ -202,6 +241,10 @@ func (s *Server) deleteCategory(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.currentUser(r)
 	if !ok {
 		s.writeError(w, http.StatusUnauthorized, "not_signed_in")
+		return
+	}
+
+	if !s.spendWrite(w, user) {
 		return
 	}
 

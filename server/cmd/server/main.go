@@ -62,13 +62,15 @@ func run(log *slog.Logger) error {
 	}
 	defer api.Close()
 
+	// The deadlines are httpapi's, so the test harness listens in the same
+	// shape this does. See the constants for why there is a ReadTimeout and no
+	// WriteTimeout.
 	srv := &http.Server{
-		Addr:    cfg.Addr,
-		Handler: api,
-		// Generous but finite: a WebSocket upgrade will opt out of the write
-		// deadline itself, and nothing else here is long-lived.
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		Addr:              cfg.Addr,
+		Handler:           api,
+		ReadHeaderTimeout: httpapi.ReadHeaderTimeout,
+		ReadTimeout:       httpapi.ReadTimeout,
+		IdleTimeout:       httpapi.IdleTimeout,
 	}
 
 	errs := make(chan error, 1)

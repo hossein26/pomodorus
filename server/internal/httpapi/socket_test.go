@@ -414,3 +414,44 @@ func TestEditingTheIntervalsPushesNoFeed(t *testing.T) {
 
 	watching.ExpectNothing()
 }
+
+func TestTheSocketCeilingRefusesRatherThanRunningOut(t *testing.T) {
+	// Two, so the ceiling is reachable in a test. In production it is five
+	// thousand, and what it protects is the process: each socket is a
+	// goroutine, a hub subscription and a query every keepalive.
+	h := apitest.New(t, apitest.SocketCeiling(2))
+
+	first := h.NewClient().Socket()
+	h.NewClient().Socket()
+
+	// Refused as an ordinary HTTP status, because the upgrade has not happened
+	// yet and there is no socket to close with a close code. The client's own
+	// reconnect backoff reads this as "try again in a moment", which is exactly
+	// what a ceiling should mean.
+	if got := h.NewClient().SocketRefused(); got != http.StatusServiceUnavailable {
+		t.Fatalf("the upgrade past the ceiling answered %d, want 503", got)
+	}
+
+	// A slot given back is a slot somebody else can have. A ceiling that leaked
+	// would refuse everybody after five thousand connections had ever been
+	// made, rather than after five thousand were open at once.
+	first.Close()
+	waitFor(t, func() bool {
+		return h.NewClient().TrySocket()
+	}, "a closed socket never gave its slot back")
+}
+
+// waitFor polls until something becomes true, because the slot is released when
+// the server's handler returns rather than when the client closes — the two are
+// on opposite ends of a connection and there is nothing to synchronise on.
+func waitFor(t *testing.T, done func() bool, complaint string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if done() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal(complaint)
+}

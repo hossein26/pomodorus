@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -42,11 +43,41 @@ type WebPush struct {
 func NewWebPush(vapid VAPID) *WebPush {
 	return &WebPush{
 		vapid: vapid,
-		// Its own client rather than the default, so a push service that
-		// accepts a connection and then says nothing cannot hold a goroutine
-		// open indefinitely.
-		client: &http.Client{Timeout: sendTimeout},
+		// Its own client rather than the default, for three reasons: a push
+		// service that accepts a connection and then says nothing cannot hold
+		// a goroutine open indefinitely, the endpoint it dials is a URL a
+		// client chose and so may not point back inside this network, and a
+		// push service has no business redirecting.
+		client: &http.Client{
+			Timeout:       sendTimeout,
+			Transport:     publicOnlyTransport(),
+			CheckRedirect: refuseRedirect,
+		},
 	}
+}
+
+// publicOnlyTransport dials the internet and nothing else. See public.go for
+// why that check belongs at dial time rather than at subscribe time.
+func publicOnlyTransport() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control:   refuseNonPublic,
+	}).DialContext
+	return transport
+}
+
+// refuseRedirect stops a 302 being a second, unvetted destination.
+//
+// RFC 8030 gives a push service no reason to redirect, and following one would
+// mean the URL that actually gets requested is not the one that was stored —
+// which is the whole surface the dial check exists to bound. The redirect
+// target would be dialled through the same guarded transport, so this is depth
+// rather than the only defence; it is here because a push service that
+// redirects is a push service doing something nobody asked it to.
+func refuseRedirect(_ *http.Request, via []*http.Request) error {
+	return fmt.Errorf("push: the endpoint redirected, which a push service does not do (after %d)", len(via))
 }
 
 // ttl is how long a push service may hold a bell for a device that is offline.

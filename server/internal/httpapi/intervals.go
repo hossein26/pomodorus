@@ -37,6 +37,10 @@ func (s *Server) setIntervals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.spendWrite(w, user) {
+		return
+	}
+
 	var body intervals
 	if err := readJSON(r, &body); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed_request")

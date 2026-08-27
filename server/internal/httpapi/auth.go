@@ -188,26 +188,29 @@ func (s *Server) isHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
-	if !s.cfg.TrustProxyHeaders {
+	proto, ok := s.forwarded(r, "X-Forwarded-Proto")
+	if !ok {
 		return false
 	}
-	return strings.EqualFold(firstHeaderValue(r, "X-Forwarded-Proto"), "https")
+	return strings.EqualFold(proto, "https")
 }
 
 // clientIP is used for one thing: the per-host rate limit. It is never
 // identity and is never shown.
 //
-// The forwarded header is believed only behind a proxy configured to set it.
-// Anyone can send that header, so trusting it unconditionally would mean a
-// caller who varies it per request looks like a fresh host every time — which
-// is the per-host limit not existing at all.
+// The forwarded header is believed only behind a proxy configured to set it,
+// and only at the position that proxy actually wrote. Anyone can send the
+// header, so trusting the value they chose would mean a caller who varies it
+// per request looks like a fresh host every time — which is the per-host limit
+// not existing at all.
 func (s *Server) clientIP(r *http.Request) netip.Addr {
-	if s.cfg.TrustProxyHeaders {
-		if forwarded := firstHeaderValue(r, "X-Forwarded-For"); forwarded != "" {
-			if addr, err := netip.ParseAddr(forwarded); err == nil {
-				return addr.Unmap()
-			}
+	if forwarded, ok := s.forwarded(r, "X-Forwarded-For"); ok {
+		if addr, err := netip.ParseAddr(forwarded); err == nil {
+			return addr.Unmap()
 		}
+		// A proxy that wrote something unparseable at the position we trust is
+		// a proxy misconfigured, not an invitation to read further left. Fall
+		// through to the peer address.
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -222,8 +225,45 @@ func (s *Server) clientIP(r *http.Request) netip.Addr {
 	return addr.Unmap()
 }
 
-func firstHeaderValue(r *http.Request, name string) string {
-	value := r.Header.Get(name)
-	first, _, _ := strings.Cut(value, ",")
-	return strings.TrimSpace(first)
+// forwarded reads the one value of a comma-separated forwarded header that a
+// trusted proxy wrote, counting from the right.
+//
+// From the right because that is the only end anybody here controls. Each
+// proxy appends what it saw, so the last entry is the nearest proxy's own
+// observation and everything to the left of it is hearsay — beginning with
+// whatever the caller invented before the first proxy ever saw the request. A
+// proxy that overwrites the header leaves one entry and both ends agree; a
+// proxy that appends leaves the caller's invention in front, and reading from
+// the left is reading the caller. Counting back `TrustedProxyHops` from the
+// right is correct in both cases, which is what lets this ship without first
+// proving which kind of proxy is in front of it.
+//
+// A header with fewer entries than there are trusted hops is refused whole.
+// That is a proxy chain shorter than it was configured to be, and the honest
+// answer is to fall back to the peer address rather than to reach past the end
+// of the list into something a client could have written.
+func (s *Server) forwarded(r *http.Request, name string) (string, bool) {
+	hops := s.cfg.TrustedProxyHops
+	if hops < 1 {
+		return "", false
+	}
+	raw := r.Header.Values(name)
+	if len(raw) == 0 {
+		return "", false
+	}
+	// Repeated headers are the same list as one comma-separated line, and a
+	// proxy is free to send either.
+	var values []string
+	for _, line := range raw {
+		for _, value := range strings.Split(line, ",") {
+			if value = strings.TrimSpace(value); value != "" {
+				values = append(values, value)
+			}
+		}
+	}
+	at := len(values) - hops
+	if at < 0 {
+		return "", false
+	}
+	return values[at], true
 }

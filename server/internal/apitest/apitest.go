@@ -115,19 +115,31 @@ func (c *Clock) Set(at time.Time) {
 // deployment is how the server under test is stood up — the facts about its
 // surroundings rather than about what it does.
 type deployment struct {
-	cfg       config.Config
-	overTLS   bool
-	pingEvery time.Duration
-	client    fs.FS
+	cfg        config.Config
+	overTLS    bool
+	pingEvery  time.Duration
+	maxSockets int
+	client     fs.FS
 }
 
 // An Option changes how the server under test is deployed, not what it does.
 type Option func(*deployment)
 
-// BehindProxy stands the server behind a proxy that sets the forwarded
-// headers, and says those headers may be believed.
-func BehindProxy() Option {
-	return func(d *deployment) { d.cfg.TrustProxyHeaders = true }
+// BehindProxy stands the server behind `hops` proxies that set the forwarded
+// headers, and says those headers may be believed that far back from the right.
+//
+// Passing nothing means one proxy, which is the production shape: a single
+// reverse proxy terminating TLS. Passing more is how a test stands the server
+// behind a CDN in front of that proxy.
+func BehindProxy(hops ...int) Option {
+	behind := 1
+	if len(hops) > 0 {
+		behind = hops[0]
+	}
+	return func(d *deployment) {
+		d.cfg.TrustProxyHeaders = true
+		d.cfg.TrustedProxyHops = behind
+	}
 }
 
 // OverTLS serves HTTPS, which is how production is reached.
@@ -143,6 +155,13 @@ func OverTLS() Option {
 // proxy cannot be made to believe the test's clock.
 func Keepalive(every time.Duration) Option {
 	return func(d *deployment) { d.pingEvery = every }
+}
+
+// SocketCeiling turns down how many concurrent sockets this deployment will
+// carry, so a test can watch the ceiling turn somebody away without opening
+// the five thousand connections the real one allows.
+func SocketCeiling(n int) Option {
+	return func(d *deployment) { d.maxSockets = n }
 }
 
 // WithVAPID gives the deployment a keypair, which is what a production one
@@ -217,6 +236,12 @@ func New(t *testing.T, options ...Option) *Harness {
 		}
 		api.ServeHTTP(w, r)
 	}))
+	// The same deadlines the binary listens with, so a socket held open across
+	// a test is held open against the shape production has.
+	h.server.Config.ReadHeaderTimeout = httpapi.ReadHeaderTimeout
+	h.server.Config.ReadTimeout = httpapi.ReadTimeout
+	h.server.Config.IdleTimeout = httpapi.IdleTimeout
+
 	t.Cleanup(h.server.Close)
 
 	h.boot()
@@ -240,6 +265,7 @@ func (h *Harness) boot() {
 		// Left at its default unless a test asked otherwise, so the socket
 		// under test is the one that ships.
 		SocketPing: h.stood.pingEvery,
+		MaxSockets: h.stood.maxSockets,
 		Client:     h.stood.client,
 		// Discarded rather than routed to the test log: the handlers log
 		// server errors, and a test that deliberately provokes one should not
@@ -341,9 +367,29 @@ type Client struct {
 }
 
 // From makes every later request appear to come from an address, the way a
-// proxy would report it. Whether that is believed is the server's business.
+// proxy that overwrites the header would report it. Whether that is believed
+// is the server's business.
 func (c *Client) From(ip string) *Client {
 	c.headers.Set("X-Forwarded-For", ip)
+	return c
+}
+
+// Through sets the whole X-Forwarded-For chain, oldest first, the way it
+// arrives after passing through proxies that append rather than overwrite.
+//
+// It is how a test writes down the case `From` cannot express: the caller
+// invented a value before the first proxy ever saw the request, and it is
+// still sitting at the left of the list when the request gets here.
+func (c *Client) Through(chain ...string) *Client {
+	c.headers.Set("X-Forwarded-For", strings.Join(chain, ", "))
+	return c
+}
+
+// ProtoThrough is Through for the header that decides the cookie's Secure
+// flag. Same shape and the same reason: a proxy that appends leaves whatever
+// the caller claimed the scheme was in front of the truth.
+func (c *Client) ProtoThrough(chain ...string) *Client {
+	c.headers.Set("X-Forwarded-Proto", strings.Join(chain, ", "))
 	return c
 }
 

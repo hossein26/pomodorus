@@ -27,6 +27,7 @@ import (
 
 	"github.com/yazdanctx/pomodorus/server/internal/clock"
 	mailer "github.com/yazdanctx/pomodorus/server/internal/mail"
+	"github.com/yazdanctx/pomodorus/server/internal/ratelimit"
 	"github.com/yazdanctx/pomodorus/server/internal/store/db"
 )
 
@@ -110,12 +111,12 @@ type Service struct {
 	// which costs one resend and buys one less secret to manage.
 	secret []byte
 
-	// In-memory limits, keyed as their names say. See throttle.go for why
-	// these are not database counts like the two above.
-	globalHour  *throttle
-	globalDay   *throttle
-	verifyIP    *throttle
-	verifyEmail *throttle
+	// In-memory limits, keyed as their names say. See package ratelimit for
+	// why these are not database counts like the two above.
+	globalHour  *ratelimit.Window
+	globalDay   *ratelimit.Window
+	verifyIP    *ratelimit.Window
+	verifyEmail *ratelimit.Window
 }
 
 func NewService(q *db.Queries, c clock.Clock, m mailer.Mailer) *Service {
@@ -127,10 +128,10 @@ func NewService(q *db.Queries, c clock.Clock, m mailer.Mailer) *Service {
 	}
 	return &Service{
 		q: q, clock: c, mail: m, secret: secret,
-		globalHour:  newThrottle(GlobalWindowHour, MaxCodesPerHour),
-		globalDay:   newThrottle(GlobalWindowDay, MaxCodesPerDay),
-		verifyIP:    newThrottle(VerifyWindow, MaxVerifiesPerIP),
-		verifyEmail: newThrottle(VerifyWindow, MaxVerifiesPerEmail),
+		globalHour:  ratelimit.New(GlobalWindowHour, MaxCodesPerHour),
+		globalDay:   ratelimit.New(GlobalWindowDay, MaxCodesPerDay),
+		verifyIP:    ratelimit.New(VerifyWindow, MaxVerifiesPerIP),
+		verifyEmail: ratelimit.New(VerifyWindow, MaxVerifiesPerEmail),
 	}
 }
 
@@ -153,7 +154,7 @@ func (s *Service) RequestCode(ctx context.Context, address string, from netip.Ad
 	// to make it spend. Checked but not consumed here: budget is spent when a
 	// mail is actually sent, further down, so a refused request never eats the
 	// allowance of a real one.
-	if s.globalHour.remaining(globalKey, now) <= 0 || s.globalDay.remaining(globalKey, now) <= 0 {
+	if s.globalHour.Remaining(globalKey, now) <= 0 || s.globalDay.Remaining(globalKey, now) <= 0 {
 		return ErrRateLimited
 	}
 
@@ -202,8 +203,8 @@ func (s *Service) RequestCode(ctx context.Context, address string, from netip.Ad
 	// Spent here rather than at the top: everything above can still refuse, and
 	// a refusal that consumed budget would let an attacker exhaust the day
 	// without a single mail leaving the building.
-	s.globalHour.allow(globalKey, now)
-	s.globalDay.allow(globalKey, now)
+	s.globalHour.Allow(globalKey, now)
+	s.globalDay.Allow(globalKey, now)
 
 	return s.mail.Send(ctx, codeMessage(email, code))
 }
@@ -225,10 +226,10 @@ func (s *Service) Verify(ctx context.Context, address, code string, from netip.A
 	// the code: it needs no session, does a database read per call, and had
 	// nothing at all in front of it. Keyed by address as well as by source, so
 	// one address cannot be worked on from many hosts.
-	if from.IsValid() && !s.verifyIP.allow(from.String(), now) {
+	if from.IsValid() && !s.verifyIP.Allow(from.String(), now) {
 		return "", db.User{}, ErrRateLimited
 	}
-	if !s.verifyEmail.allow(email, now) {
+	if !s.verifyEmail.Allow(email, now) {
 		return "", db.User{}, ErrRateLimited
 	}
 
@@ -307,6 +308,47 @@ func (s *Service) SignOut(ctx context.Context, token string) error {
 		return nil
 	}
 	return s.q.DeleteAuthSession(ctx, tokenHash(token))
+}
+
+// StaleCodeAge is how far back a login code has to be before it is thrown
+// away. Comfortably past both CodeTTL, after which it cannot be verified, and
+// RateWindow, after which it no longer counts against anybody's allowance —
+// deleting one inside that window would hand back quota that was already spent.
+const StaleCodeAge = 24 * time.Hour
+
+// Swept is what one sweep removed, for the log line at boot.
+type Swept struct {
+	Sessions int64
+	Codes    int64
+}
+
+// Sweep deletes the rows in these two tables that can no longer mean anything.
+//
+// Neither delete changes what the app would answer. An expired session is
+// already refused, because every read of one is bounded by `expires_at`; a
+// login code a day old is past its own expiry and past the window the rate
+// limits count in. What the sweep buys is that the two tables an unauthenticated
+// caller can grow — a code row per request, a session row per sign-in — do not
+// grow forever, and that the index every authenticated request touches is not
+// mostly dead weight.
+//
+// It is deliberately not a scheduler. It runs once at boot, beside rebuilding
+// the pending bells, because that is the one moment this app already has for
+// work that is nobody's request. See docs/adr/0002: nothing here derives, flips
+// or advances any state — a sweep that never ran would cost disk and nothing
+// else, which is exactly why it is safe to do this way round.
+func (s *Service) Sweep(ctx context.Context) (Swept, error) {
+	now := s.clock.Now()
+
+	sessions, err := s.q.DeleteExpiredAuthSessions(ctx, ts(now))
+	if err != nil {
+		return Swept{}, fmt.Errorf("sweep sessions: %w", err)
+	}
+	codes, err := s.q.DeleteStaleLoginCodes(ctx, ts(now.Add(-StaleCodeAge)))
+	if err != nil {
+		return Swept{Sessions: sessions}, fmt.Errorf("sweep codes: %w", err)
+	}
+	return Swept{Sessions: sessions, Codes: codes}, nil
 }
 
 func (s *Service) openSession(ctx context.Context, user pgtype.UUID, now time.Time) (string, error) {

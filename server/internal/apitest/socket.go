@@ -130,6 +130,25 @@ func (c *Client) SocketRefused(origin ...string) int {
 	return res.StatusCode
 }
 
+// TrySocket opens a connection and reports whether it was allowed, closing it
+// again either way. It is for the one question SocketRefused cannot ask: not
+// "was this turned away" but "is there room yet".
+func (c *Client) TrySocket() bool {
+	c.t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), waitFor)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, socketURL(c.base), &websocket.DialOptions{
+		HTTPClient: c.http,
+	})
+	if err != nil {
+		return false
+	}
+	_ = conn.CloseNow()
+	return true
+}
+
 // Next waits for the next frame.
 func (s *Socket) Next() Frame {
 	s.t.Helper()

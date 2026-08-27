@@ -86,6 +86,26 @@ of the break, and a long enough ring leaves none.
 session could mint focus time from nothing. It is refused outright in
 production.
 
+**Forwarded headers are read from the right.** `X-Forwarded-For` and
+`X-Forwarded-Proto` are believed only `TRUSTED_PROXY_HOPS` back from the *last*
+value, never the first. Each proxy appends what it saw, so the left end is
+whatever the caller invented — reading it hands the rate limiter a bucket the
+attacker chose. One hop is a reverse proxy; two is a CDN in front of it.
+
+**The tight limit is per account, the loose one is per address.** Iranian
+mobile networks put thousands of people behind one CGNAT address, so a per-IP
+limit tight enough to matter breaks the app for a whole network. Writes are
+limited per user — which is also where the cost is, since a write fans out to
+every socket — and the per-address limit is a deliberately loose backstop for
+the two public reads. Do not tighten the second one to fix a problem that
+belongs to the first. The socket ceiling is global for the same reason.
+
+**The push endpoint is a URL a client chose.** The server later posts to it, so
+it is checked at dial time against the resolved address, not at subscribe time
+against the string — that gap is DNS rebinding. Subscriptions are also capped
+per account, by trimming the least recently seen: without a ceiling one account
+turns each bell into unbounded outbound requests at a target of its choosing.
+
 **Offline is out of scope.** v1 was local-first; this is not. Do not add local
 queues, replay, or conflict resolution. There *is* a service worker, and it
 exists solely to receive a push — it caches nothing, and must not start.

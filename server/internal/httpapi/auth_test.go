@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
@@ -284,13 +285,12 @@ func TestAnAddressIsCaseInsensitive(t *testing.T) {
 	}
 }
 
+// countUsers reads the table rather than an endpoint. It used to read a count
+// off /api/health, which is unauthenticated — publishing how many people have
+// signed up was never something that endpoint needed to do.
 func countUsers(t *testing.T, h *apitest.Harness) int64 {
 	t.Helper()
-	var body struct {
-		Users int64 `json:"users"`
-	}
-	h.GET("/api/health").ExpectStatus(http.StatusOK).JSON(&body)
-	return body.Users
+	return int64(countRows(t, h, "users"))
 }
 
 func wrongCode(right string) string {
@@ -376,4 +376,141 @@ func TestBehindAProxyTheForwardedAddressIsWhatCounts(t *testing.T) {
 
 	// Somebody else behind the same proxy is unaffected.
 	requestCode(h.NewClient().From("203.0.113.2"), addressN(99)).ExpectStatus(http.StatusOK)
+}
+
+func TestAProxyThatAppendsCannotBeTalkedPastTheRateLimit(t *testing.T) {
+	h := apitest.New(t, apitest.BehindProxy())
+
+	// The case the leftmost reading gets wrong. This proxy appends rather than
+	// overwrites, so whatever the caller invented is still sitting in front of
+	// the address the proxy actually saw — and reading from that end would
+	// hand the caller a fresh bucket on every request.
+	for i := range auth.MaxCodesPerIP {
+		forging := h.NewClient().Through(fmt.Sprintf("203.0.113.%d", i), "198.51.100.7")
+		if requestCode(forging, addressN(i/2)).Status != http.StatusOK {
+			t.Fatalf("request %d was refused before the limit", i+1)
+		}
+	}
+
+	// A value nobody has used yet, and the same real address behind it.
+	forging := h.NewClient().Through("203.0.113.250", "198.51.100.7")
+	requestCode(forging, addressN(99)).ExpectError(http.StatusTooManyRequests, "rate_limited")
+}
+
+func TestBehindACDNTheAddressIsCountedBackTwoHops(t *testing.T) {
+	h := apitest.New(t, apitest.BehindProxy(2))
+
+	// A CDN in front of the reverse proxy: the CDN appends the caller, then
+	// the proxy appends the CDN's edge. The caller is two back from the right,
+	// and everything to the left of them is theirs to invent.
+	exhausted := h.NewClient().Through("203.0.113.1", "198.51.100.7")
+	for i := range auth.MaxCodesPerIP {
+		if requestCode(exhausted, addressN(i/2)).Status != http.StatusOK {
+			t.Fatalf("request %d was refused before the limit", i+1)
+		}
+	}
+	requestCode(exhausted, addressN(99)).ExpectError(http.StatusTooManyRequests, "rate_limited")
+
+	// The same caller, with a forged entry pushed in front. It changes nothing:
+	// the position that is read is counted from the other end.
+	forging := h.NewClient().Through("192.0.2.99", "203.0.113.1", "198.51.100.7")
+	requestCode(forging, addressN(98)).ExpectError(http.StatusTooManyRequests, "rate_limited")
+
+	// Somebody genuinely else behind the same CDN is unaffected.
+	requestCode(h.NewClient().Through("203.0.113.2", "198.51.100.7"), addressN(97)).
+		ExpectStatus(http.StatusOK)
+}
+
+func TestAChainShorterThanTheTrustedHopsIsNotBelieved(t *testing.T) {
+	h := apitest.New(t, apitest.BehindProxy(2))
+
+	// Two hops are configured and only one value arrived, so there is no
+	// position here that a proxy wrote. Reaching past the end of the list would
+	// be reading the caller; the peer address is the honest answer instead, and
+	// every one of these shares it.
+	for i := range auth.MaxCodesPerIP {
+		if requestCode(h.NewClient().Through(fmt.Sprintf("203.0.113.%d", i)), addressN(i/2)).Status != http.StatusOK {
+			t.Fatalf("request %d was refused before the limit", i+1)
+		}
+	}
+	requestCode(h.NewClient().Through("203.0.113.250"), addressN(99)).
+		ExpectError(http.StatusTooManyRequests, "rate_limited")
+}
+
+func TestAForgedForwardedProtoCannotDropTheSecureFlag(t *testing.T) {
+	h := apitest.New(t, apitest.BehindProxy())
+
+	// The proxy terminated TLS and said so; the caller claimed otherwise before
+	// it got there. Believing the caller would be a session cookie that travels
+	// in the clear on every later request.
+	client := h.NewClient().ProtoThrough("http", "https")
+	requestCode(client, address).ExpectStatus(http.StatusOK)
+
+	cookie := verify(client, address, h.LastCode(address)).
+		ExpectStatus(http.StatusOK).
+		Cookie("pomodorus_session")
+
+	if !cookie.Secure {
+		t.Error("a forged X-Forwarded-Proto dropped the Secure flag")
+	}
+}
+
+func TestARestartThrowsAwayTheAuthRowsThatCanNoLongerMeanAnything(t *testing.T) {
+	h := apitest.New(t)
+
+	// Two sign-ins and the codes behind them. Both tables are ones an
+	// unauthenticated caller can add to — a code row per request, a session row
+	// per sign-in — so both are ones that grow forever if nothing removes them.
+	h.SignIn(address)
+	h.SignIn(addressN(1))
+
+	if sessions := countRows(t, h, "auth_sessions"); sessions != 2 {
+		t.Fatalf("started with %d sessions, want 2", sessions)
+	}
+	if codes := countRows(t, h, "login_codes"); codes != 2 {
+		t.Fatalf("started with %d codes, want 2", codes)
+	}
+
+	// Far enough on that every one of them is dead: past the session's own
+	// expiry, and well past the window a code still counts against a limit in.
+	h.Clock.Advance(auth.SessionTTL + time.Hour)
+	h.Reboot()
+
+	if sessions := countRows(t, h, "auth_sessions"); sessions != 0 {
+		t.Errorf("%d expired sessions survived the restart", sessions)
+	}
+	if codes := countRows(t, h, "login_codes"); codes != 0 {
+		t.Errorf("%d stale codes survived the restart", codes)
+	}
+}
+
+func TestTheSweepDoesNotHandBackRateLimitQuota(t *testing.T) {
+	h := apitest.New(t)
+
+	// The per-address limit is counted out of the login_codes table, which is
+	// the whole reason it survives a restart. A sweep that took the recent rows
+	// with it would turn a deploy into a way of resetting the limit.
+	for range auth.MaxCodesPerEmail {
+		requestCode(h.Client, address).ExpectStatus(http.StatusOK)
+	}
+	requestCode(h.Client, address).ExpectError(http.StatusTooManyRequests, "rate_limited")
+
+	h.Reboot()
+	requestCode(h.Client, address).ExpectError(http.StatusTooManyRequests, "rate_limited")
+
+	if codes := countRows(t, h, "login_codes"); codes != auth.MaxCodesPerEmail {
+		t.Errorf("%d codes after the restart, want the %d that were spent", codes, auth.MaxCodesPerEmail)
+	}
+}
+
+// countRows is the plainest possible look at what is actually stored. The API
+// has no way to ask how many sessions exist, and it should not grow one for a
+// test — what is being asserted here is about the table, not about an answer.
+func countRows(t *testing.T, h *apitest.Harness, table string) int {
+	t.Helper()
+	var n int
+	if err := h.DB.QueryRow(context.Background(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }

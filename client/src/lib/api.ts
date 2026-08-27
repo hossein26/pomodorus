@@ -110,6 +110,8 @@ export function messageFor(error: unknown): string {
       return copy.errors.categoryNameProfane;
     case "category_busy":
       return copy.errors.categoryBusy;
+    case "too_many_categories":
+      return copy.errors.tooManyCategories;
     case "category_not_found":
       return copy.errors.categoryNotFound;
     // The same sentence for the same problem, from the two places a number can

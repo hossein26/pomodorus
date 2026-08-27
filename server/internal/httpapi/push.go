@@ -3,6 +3,8 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 
@@ -51,6 +53,19 @@ const (
 	maxPushKey  = 256
 )
 
+// maxSubscriptionsPerUser is how many devices one account may be woken on.
+//
+// Generous against any real answer — a phone, a laptop, a tablet, and a couple
+// of browsers on each is nowhere near it — and finite because the endpoint is
+// a URL the client chooses. Without a ceiling, one account can store an
+// unbounded number of them and every bell becomes an unbounded number of
+// outbound requests at a destination somebody else picked.
+//
+// It is enforced by trimming the least recently seen rather than by refusing
+// the newest, so it is never a device somebody just installed the app on that
+// gets turned away. See TrimSubscriptions.
+const maxSubscriptionsPerUser = 20
+
 // subscribePush records a device that has agreed to be told when its bell goes.
 //
 // Idempotent on the endpoint, which is the device's own name for itself: a tab
@@ -64,6 +79,10 @@ func (s *Server) subscribePush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.spendWrite(w, user) {
+		return
+	}
+
 	var body subscribeRequest
 	if err := readJSON(r, &body); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed_request")
@@ -73,10 +92,7 @@ func (s *Server) subscribePush(w http.ResponseWriter, r *http.Request) {
 	endpoint := strings.TrimSpace(body.Endpoint)
 	p256dh := strings.TrimSpace(body.P256dh)
 	auth := strings.TrimSpace(body.Auth)
-	// https only, because that is what a push service is and because the
-	// column's own CHECK says so — a row that failed the constraint would be a
-	// 500 for what is a malformed request.
-	if !strings.HasPrefix(endpoint, "https://") || len(endpoint) > maxEndpoint {
+	if !validPushEndpoint(endpoint) {
 		s.writeError(w, http.StatusBadRequest, "malformed_request")
 		return
 	}
@@ -100,11 +116,53 @@ func (s *Server) subscribePush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The ceiling, applied after the write rather than before it: this device
+	// is the most recently seen by definition, so it is never the one trimmed,
+	// and doing it in this order means the check cannot refuse the caller.
+	//
+	// A failure here is logged and not answered on. The subscription landed,
+	// which is what was asked for; the trim is housekeeping, and the next
+	// device to subscribe runs it again.
+	if trimmed, err := s.q.TrimSubscriptions(ctx, db.TrimSubscriptionsParams{
+		UserID: user.ID, Keep: maxSubscriptionsPerUser,
+	}); err != nil {
+		s.log.Error("trim push subscriptions", "error", err)
+	} else if trimmed > 0 {
+		s.log.Info("push: trimmed subscriptions past the ceiling", "count", trimmed)
+	}
+
 	// Answered with the timer state, like every other write, so the tab that
 	// just subscribed mid-session is not left having to ask again. Nothing is
 	// pushed for it: another device does not care which addresses this one
 	// keeps.
 	s.writeTimerState(ctx, w, user, s.now())
+}
+
+// validPushEndpoint vets what can be decided from the string alone.
+//
+// https only, because that is what a push service is and because the column's
+// own CHECK says so — a row that failed the constraint would be a 500 for what
+// is a malformed request.
+//
+// An endpoint written as an address rather than a name is judged here too.
+// That is not the defence against a subscription pointing back inside this
+// network — the dial in package push is, because only it sees what a *name*
+// resolves to, and it sees it at the moment the connection is opened rather
+// than twenty-five minutes earlier. This is the part that can be answered
+// honestly right now, and answering it turns a subscription that would
+// silently never deliver into a 400 the client can do something about.
+func validPushEndpoint(raw string) bool {
+	if len(raw) > maxEndpoint {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return false
+	}
+	if addr, err := netip.ParseAddr(parsed.Hostname()); err == nil && !push.IsPublic(addr) {
+		return false
+	}
+	return true
 }
 
 // --- the notifier's view of the world ---------------------------------------

@@ -356,6 +356,10 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.spendWrite(w, user) {
+		return
+	}
+
 	var body startSessionRequest
 	if err := readJSON(r, &body); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed_request")
@@ -445,6 +449,10 @@ func (s *Server) cancelSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.spendWrite(w, user) {
+		return
+	}
+
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "session_not_found")
@@ -517,6 +525,10 @@ func (s *Server) confirmSession(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.currentUser(r)
 	if !ok {
 		s.writeError(w, http.StatusUnauthorized, "not_signed_in")
+		return
+	}
+
+	if !s.spendWrite(w, user) {
 		return
 	}
 

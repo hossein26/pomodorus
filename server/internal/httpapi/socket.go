@@ -87,6 +87,23 @@ func (s *Server) socket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Room in the process, claimed before the upgrade rather than after it: a
+	// connection accepted and then closed has already cost the handshake, the
+	// goroutine and the first two queries, which is most of what refusing was
+	// meant to save.
+	//
+	// Refused as an ordinary HTTP error, because at this point it still is one
+	// — the upgrade has not happened, so there is no socket to close with a
+	// status. The client's reconnect backoff turns this into "try again in a
+	// moment", which is exactly the right behaviour for a ceiling.
+	release, ok := s.sockets.claim(s.maxSockets)
+	if !ok {
+		s.log.Warn("socket: at the ceiling", "open", s.sockets.held())
+		s.writeError(w, http.StatusServiceUnavailable, "server_busy")
+		return
+	}
+	defer release()
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: s.socketOrigins(),
 	})

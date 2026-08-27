@@ -1,7 +1,9 @@
 package httpapi_test
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -13,6 +15,12 @@ import (
 // bell is the payload a service worker receives: which ring this is, and no
 // words. The Persian for it lives in the client's copy.json, beside the
 // sentence the in-tab notification uses.
+// maxDevices mirrors the server's ceiling on subscriptions per account. It is
+// written out rather than exported from the handler so that a test which
+// asserts about the ceiling is not agreeing with whatever the ceiling happens
+// to be.
+const maxDevices = 20
+
 type bell struct {
 	SessionID string `json:"sessionId"`
 	Kind      string `json:"kind"`
@@ -311,4 +319,93 @@ func subscriptionCount(t *testing.T, h *apitest.Harness) int {
 		t.Fatal(err)
 	}
 	return count
+}
+
+func TestAnEndpointPointingBackInsideThisNetworkIsRefused(t *testing.T) {
+	h := apitest.New(t)
+	client := signedIn(t, h)
+
+	// A subscription is a URL this server later posts to, so an endpoint is a
+	// request to open a connection. These are the ones it must not be talked
+	// into opening — the metadata service, the database on the compose
+	// network, something listening only on loopback.
+	for _, endpoint := range []string{
+		"https://127.0.0.1/push",
+		"https://[::1]/push",
+		"https://169.254.169.254/latest/meta-data/",
+		"https://10.0.0.5:5432/push",
+		"https://192.168.1.1/push",
+		"https://172.16.0.1/push",
+		"https://[fd00::1]/push",
+		"https://100.64.0.1/push",
+		// Loopback wearing a v6 mapping, which is the spelling a check on the
+		// string rather than on the address would wave through.
+		"https://[::ffff:127.0.0.1]/push",
+	} {
+		client.POST("/api/push/subscribe", map[string]any{
+			"endpoint": endpoint, "p256dh": "k", "auth": "a",
+		}).ExpectError(http.StatusBadRequest, "malformed_request")
+	}
+}
+
+func TestOneAccountCannotRegisterUnboundedDevices(t *testing.T) {
+	h := apitest.New(t)
+	client, category := working(t, h)
+
+	// The endpoint is a URL the client chooses, so without a ceiling this loop
+	// is how one account turns a single bell into as many outbound requests as
+	// it likes, at a destination of its choosing.
+	for i := range maxDevices * 2 {
+		subscribe(client, fmt.Sprintf("device-%03d", i)).ExpectStatus(http.StatusOK)
+	}
+	start(client, category, pomodoro).ExpectStatus(http.StatusOK)
+
+	var stored int
+	if err := h.DB.QueryRow(context.Background(),
+		"SELECT count(*) FROM push_subscriptions").Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != maxDevices {
+		t.Fatalf("stored %d subscriptions, want the ceiling of %d", stored, maxDevices)
+	}
+
+	// And the bell goes to exactly those, rather than to a number the caller
+	// picked.
+	h.Clock.Advance(25 * time.Minute)
+	if got := len(delivered(t, h)); got != maxDevices {
+		t.Errorf("the bell went to %d devices, want %d", got, maxDevices)
+	}
+}
+
+func TestTheDeviceTrimmedIsTheOneLongestUnseen(t *testing.T) {
+	h := apitest.New(t)
+	client := signedIn(t, h)
+
+	// A phone in daily use, and then the ceiling's worth of other devices. The
+	// phone must survive: it says it is still here on every page load, and the
+	// whole point of trimming the least recently seen rather than refusing the
+	// newest is that a real device is never the one dropped.
+	subscribe(client, "phone").ExpectStatus(http.StatusOK)
+	for i := range maxDevices - 1 {
+		h.Clock.Advance(time.Minute)
+		subscribe(client, fmt.Sprintf("other-%03d", i)).ExpectStatus(http.StatusOK)
+	}
+
+	// The phone checks in, as a tab that reloads does.
+	h.Clock.Advance(time.Minute)
+	subscribe(client, "phone").ExpectStatus(http.StatusOK)
+
+	// One more device than fits. Something has to go, and it is not the phone.
+	h.Clock.Advance(time.Minute)
+	subscribe(client, "tablet").ExpectStatus(http.StatusOK)
+
+	var kept bool
+	if err := h.DB.QueryRow(context.Background(),
+		"SELECT EXISTS (SELECT 1 FROM push_subscriptions WHERE endpoint = $1)",
+		"https://push.example/phone").Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if !kept {
+		t.Error("the device in daily use was trimmed")
+	}
 }

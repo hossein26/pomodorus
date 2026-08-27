@@ -1,14 +1,21 @@
 package httpapi_test
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/yazdanctx/pomodorus/server/internal/apitest"
 )
+
+// maxCategories mirrors the server's ceiling on live tasks per account. It is
+// written out rather than exported from the handler so that a test asserting
+// about the ceiling is not agreeing with whatever the ceiling happens to be.
+const maxCategories = 100
 
 type category struct {
 	ID       string `json:"id"`
@@ -253,4 +260,56 @@ func TestCategoriesRequireBeingSignedIn(t *testing.T) {
 
 	h.GET("/api/categories").ExpectError(http.StatusUnauthorized, "not_signed_in")
 	createCategory(h.Client, "درس", true).ExpectError(http.StatusUnauthorized, "not_signed_in")
+}
+
+func TestATaskListHasACeiling(t *testing.T) {
+	h := apitest.New(t)
+	client := signedIn(t, h)
+
+	// The id is minted by the client, so nothing but this stops one account
+	// writing rows until the disk is full.
+	for i := range maxCategories {
+		// Spread across the clock, because writes are also rate limited per
+		// account and a hundred of them in one instant is not what a person
+		// does. What is under test here is the ceiling on how many tasks are
+		// kept, not how fast they arrived.
+		h.Clock.Advance(2 * time.Second)
+		createCategory(client, fmt.Sprintf("تسک %d", i), false).ExpectStatus(http.StatusOK)
+	}
+	h.Clock.Advance(2 * time.Second)
+	createCategory(client, "یکی زیادی", false).
+		ExpectError(http.StatusConflict, "too_many_categories")
+
+	// Tidying up makes room straight away. A tombstone is not a task, and a
+	// ceiling that counted the ones already deleted would be a ceiling on how
+	// many tasks somebody has ever had rather than on how many they keep.
+	first := categories(t, client)[0]
+	h.Clock.Advance(2 * time.Second)
+	client.POST("/api/categories/"+first.ID+"/delete", nil).
+		ExpectStatus(http.StatusNoContent)
+	h.Clock.Advance(2 * time.Second)
+	createCategory(client, "حالا جا هست", false).ExpectStatus(http.StatusOK)
+}
+
+func TestTheCeilingDoesNotBreakARetriedCreate(t *testing.T) {
+	h := apitest.New(t)
+	client := signedIn(t, h)
+
+	var lastID string
+	for i := range maxCategories {
+		h.Clock.Advance(2 * time.Second)
+		lastID = createdCategory(t, createCategory(client, fmt.Sprintf("تسک %d", i), false)).ID
+	}
+
+	// The account is full, and this is the request whose answer got lost on the
+	// way back. It is not a new task, and refusing it would break the whole
+	// reason the id is minted by the client.
+	h.Clock.Advance(2 * time.Second)
+	again := client.POST("/api/categories", map[string]any{
+		"id": lastID, "name": fmt.Sprintf("تسک %d", maxCategories-1), "isPublic": false,
+	})
+	again.ExpectStatus(http.StatusOK)
+	if got := createdCategory(t, again).ID; got != lastID {
+		t.Errorf("the retry made a different row: %s, want %s", got, lastID)
+	}
 }

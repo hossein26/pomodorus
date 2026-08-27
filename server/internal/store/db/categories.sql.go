@@ -37,6 +37,41 @@ func (q *Queries) CategoryByID(ctx context.Context, arg CategoryByIDParams) (Cat
 	return i, err
 }
 
+const categoryRoom = `-- name: CategoryRoom :one
+SELECT
+    (SELECT count(*) FROM categories
+     WHERE categories.user_id = $1 AND categories.deleted_at IS NULL)::bigint AS live,
+    EXISTS (SELECT 1 FROM categories
+            WHERE categories.id = $2 AND categories.user_id = $1) AS mine
+`
+
+type CategoryRoomParams struct {
+	Owner  pgtype.UUID
+	Wanted pgtype.UUID
+}
+
+type CategoryRoomRow struct {
+	Live int64
+	Mine bool
+}
+
+// Whether there is room for another task, asked as one round trip.
+//
+// Two questions rather than one, because creating is idempotent on the
+// client-minted id: a retry of a create that already landed must still be
+// answered with the row it made, even when the account is at its ceiling.
+// `mine` is what tells a retry apart from a genuinely new task.
+//
+// Tombstones are not counted. Deleting a task is meant to make room, and a
+// ceiling that counted the ones already tidied away would be a ceiling on how
+// many tasks somebody has ever had.
+func (q *Queries) CategoryRoom(ctx context.Context, arg CategoryRoomParams) (CategoryRoomRow, error) {
+	row := q.db.QueryRow(ctx, categoryRoom, arg.Owner, arg.Wanted)
+	var i CategoryRoomRow
+	err := row.Scan(&i.Live, &i.Mine)
+	return i, err
+}
+
 const createCategory = `-- name: CreateCategory :one
 INSERT INTO categories (id, user_id, name, is_public, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $5)

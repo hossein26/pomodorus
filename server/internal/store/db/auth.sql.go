@@ -139,13 +139,39 @@ func (q *Queries) DeleteAuthSession(ctx context.Context, tokenHash []byte) error
 	return err
 }
 
-const deleteExpiredAuthSessions = `-- name: DeleteExpiredAuthSessions :exec
+const deleteExpiredAuthSessions = `-- name: DeleteExpiredAuthSessions :execrows
 DELETE FROM auth_sessions WHERE expires_at <= $1
 `
 
-func (q *Queries) DeleteExpiredAuthSessions(ctx context.Context, expiresAt pgtype.Timestamptz) error {
-	_, err := q.db.Exec(ctx, deleteExpiredAuthSessions, expiresAt)
-	return err
+// A session past its expiry is already refused by UserForSession, which bounds
+// every read by expires_at. Deleting it is housekeeping rather than security:
+// the row is dead weight in an index that every authenticated request touches.
+func (q *Queries) DeleteExpiredAuthSessions(ctx context.Context, expiresAt pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredAuthSessions, expiresAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteStaleLoginCodes = `-- name: DeleteStaleLoginCodes :execrows
+DELETE FROM login_codes WHERE created_at <= $1
+`
+
+// A code far enough in the past to be no use to anybody.
+//
+// The cutoff is not the code's own expiry. These rows are what the per-address
+// and per-IP limits are counted from — that is why those limits survive a
+// restart at all — so deleting one inside the rate window would hand back
+// quota that was already spent. The caller passes a cutoff well behind both
+// CodeTTL and RateWindow, and what is left is a table that does not grow
+// forever.
+func (q *Queries) DeleteStaleLoginCodes(ctx context.Context, createdAt pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteStaleLoginCodes, createdAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const liveCodeForEmail = `-- name: LiveCodeForEmail :one
