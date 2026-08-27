@@ -96,13 +96,17 @@ function TimerCta() {
     );
   }
 
+  // Running. The hue lands on the icon and nowhere else — v1 did the same, and
+  // the restraint is what keeps the ring's inversion legible: red-icon becomes
+  // red-everything, outlined becomes belled, counting down becomes counting up.
+  // A badge already red all over would have nothing left to escalate into.
   return (
     <Button asChild size="sm" variant="outline">
       <Link to="/app" className="hover:text-foreground">
         <span className={clock} dir="ltr">
           {faClock(session.endsAt - now)}
         </span>
-        <Scan size={15} />
+        <Scan size={15} className="animate-pulse text-rose-500" />
       </Link>
     </Button>
   );

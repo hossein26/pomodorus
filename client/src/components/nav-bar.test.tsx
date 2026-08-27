@@ -121,6 +121,35 @@ describe("NavBar", () => {
       expect(screen.queryByText(copy.header.timer)).toBeNull();
     });
 
+    it("tints and pulses the icon while a session runs", () => {
+      renderAt(<NavBar />, {
+        auth: SIGNED_IN,
+        session: holding(workSession(NOW + 5 * 60_000)),
+      });
+
+      const badge = screen.getByText(faClock(5 * 60_000));
+      const link = badge.closest("a");
+      expect(link).not.toBeNull();
+      // An SVG's className is an SVGAnimatedString, not a string, so the
+      // attribute is read directly rather than through classesOf.
+      const icon = (link as Element).querySelector("svg");
+      expect(icon).not.toBeNull();
+      const iconClasses = (icon as Element).getAttribute("class") ?? "";
+      expect(iconClasses).toContain("text-rose-500");
+      expect(iconClasses).toContain("animate-pulse");
+    });
+
+    it("leaves the running badge's digits muted, so the ring still has somewhere to escalate to", () => {
+      renderAt(<NavBar />, {
+        auth: SIGNED_IN,
+        session: holding(workSession(NOW + 5 * 60_000)),
+      });
+
+      const link = screen.getByText(faClock(5 * 60_000)).closest("a");
+      expect(link).not.toBeNull();
+      expect(classesOf(link as Element)).not.toContain("text-rose-500");
+    });
+
     it("inverts to the ring time, and is the only red in the bar", () => {
       renderAt(<NavBar />, {
         auth: SIGNED_IN,

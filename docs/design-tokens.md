@@ -69,10 +69,16 @@ rest of the tokens use. Keep it exactly.
    monochrome, so an error may not separate itself by hue. It separates itself
    by being **full white, boxed and iconned** instead (`Alert` +
    `TriangleAlert` + `className="text-foreground"`).
-2. **One exception in the whole app: a ringing timer is `rose-500`.** The ring
-   clock and the NavBar badge, nothing else ever. A clock that has stopped
-   meaning "time left" and started counting up has to be unmistakable across a
-   room.
+2. **One exception in the whole app: a live timer is `rose-500`.** The ring
+   clock, the NavBar badge, and the NavBar badge's `Scan` icon while a session
+   runs. Nothing else, ever.
+
+   The two states are not the same amount of red, and the difference is the
+   point. Running tints **the icon only**, leaving the digits muted. Ringing
+   tints **the whole link**. A clock that has stopped meaning "time left" and
+   started counting up has to be unmistakable across a room, and it stays
+   unmistakable because it escalates: red icon becomes red everything,
+   outlined becomes belled, counting down becomes counting up.
 3. **`yellow-600` is used for the wordmark only** — the hero title on the
    landing and the `Pomodorus` heading on the login page. It is not available
    to anything else.
@@ -115,10 +121,14 @@ session is still unknown the badge holds the CTA box (`h-8 min-w-24`) as a
 skeleton — the same reserved-box rule as the auth CTA, so a mid-pomodoro reload
 does not flash «تایمر» and then swap to a countdown.
 
-v1 also tinted the *running* badge's `Scan` icon `rose-500` (visible in
-`docs/reference/*/10-running-work.png`). That is dropped: the colour rule above
-gives the hue to the ring alone, and a badge that is already red cannot invert
-into one.
+v1 tinted the *running* badge's `Scan` icon `rose-500` and pulsed it (visible
+in `docs/reference/*/10-running-work.png`, and in
+`git show v1-nextjs:components/nav-bar.tsx`). This was dropped early in the
+rewrite on the reasoning that a badge already red cannot invert into one — and
+then restored, because that reasoning does not survive reading v1: the hue was
+never on the whole badge while running, only on the icon. The inversion is
+intact, and the running timer gets the glance-ability it had. Keep the split:
+icon while running, whole link while ringing.
 
 **Page padding** — `p-6` is the standard page inset; the timer uses
 `p-4 sm:p-6`.
@@ -364,7 +374,8 @@ Deliberately almost none.
 - Buttons: `active:translate-y-px`.
 - Dialogs: `duration-100`, fade + `zoom-95`.
 - Progress bar: `transition-[width] duration-500 ease-linear`.
-- Ring: `animate-pulse` on the bell and on the NavBar badge.
+- Running: `animate-pulse text-rose-500` on the NavBar badge's `Scan` icon.
+- Ring: `animate-pulse` on the bell and on the whole NavBar badge.
 - Skeletons: `animate-pulse`.
 - Day-detail panel and chart day changes cross-fade; the outgoing panel
   finishes leaving before the incoming one arrives, because the two differ in
