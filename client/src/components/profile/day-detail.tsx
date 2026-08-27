@@ -35,16 +35,27 @@ export function DayDetail({
           which is where the total belongs; the image trails on the left. */}
       <div className="flex items-stretch gap-4">
         <div className="flex min-w-0 flex-1 flex-col justify-center">
-          <h3 className="truncate text-xs text-muted-foreground">{faDate(day.day)}</h3>
+          <h3 className="truncate text-xs text-muted-foreground">
+            {faDate(day.day)}
+          </h3>
           {/* The unit sits under the clock rather than beside it: a bare h:mm
               says nothing about what was counted, and at this size there is no
-              room alongside on a phone. */}
-          <p className="mt-1 text-4xl leading-none font-bold sm:text-6xl" dir="ltr">
-            {faHourClock(day.totalMs)}
+              room alongside on a phone.
+
+              The clock is isolated, not turned around. `dir="ltr"` on this
+              block would also flip its `text-align: start` to the left, so it
+              sat alone off the right margin while the date above and the unit
+              below stayed flush with it. <bdi dir="ltr"> keeps the paragraph in
+              the page's RTL flow and still guarantees h:mm reads left to right
+              inside it, whatever the digits are. */}
+          <p className="mt-1 text-4xl leading-none font-bold sm:text-6xl">
+            <bdi dir="ltr">{faHourClock(day.totalMs)}</bdi>
           </p>
           {/* Set like the clock, not like a caption: the two read as one
               phrase, so the unit should not look like a footnote to it. */}
-          <p className="mt-1.5 text-base font-bold sm:text-lg">{copy.profile.focusedHours}</p>
+          <p className="mt-1.5 text-base font-bold sm:text-lg">
+            {copy.profile.focusedHours}
+          </p>
         </div>
         {/* Half the row on a phone, where the clock needs the space; from sm up
             the column is already at its width and the text has room to spare,
@@ -55,7 +66,12 @@ export function DayDetail({
               one with. */}
           <div className="absolute inset-0 z-10 bg-linear-to-t from-background via-background/20 to-transparent" />
           {banner !== null && (
-            <img src={banner} alt="" loading="eager" className="size-full object-cover" />
+            <img
+              src={banner}
+              alt=""
+              loading="eager"
+              className="size-full object-cover"
+            />
           )}
         </div>
       </div>
@@ -66,10 +82,14 @@ export function DayDetail({
             <div className="flex items-baseline justify-between gap-3 text-xs">
               {/* A row with no name of its own is set quietly: it is a
                   placeholder standing in for one, not a task called that. */}
-              <span className={`truncate ${task.name === null ? "text-muted-foreground" : ""}`}>
+              <span
+                className={`truncate ${task.name === null ? "text-muted-foreground" : ""}`}
+              >
                 {labelOf(task)}
               </span>
-              <span className="shrink-0 text-muted-foreground">{faDuration(task.totalMs)}</span>
+              <span className="shrink-0 text-muted-foreground">
+                {faDuration(task.totalMs)}
+              </span>
             </div>
             {/* The share of the day, which is what makes the rows comparable
                 at a glance — the durations beside them are the exact answer. */}
@@ -86,7 +106,11 @@ export function DayDetail({
       {/* Only on your own page, where the names are the real ones. Seeing your
           private tasks named is exactly the moment you might think everybody
           else can too. */}
-      {owner && <p className="mt-4 text-xs text-muted-foreground">{copy.profile.ownerNote}</p>}
+      {owner && (
+        <p className="mt-4 text-xs text-muted-foreground">
+          {copy.profile.ownerNote}
+        </p>
+      )}
     </section>
   );
 }
@@ -94,7 +118,9 @@ export function DayDetail({
 /** What a row is called: its own name, or the label its kind stands for. */
 function labelOf(task: DayTask): string {
   if (task.name !== null) return task.name;
-  return task.kind === "private" ? copy.profile.privateBucket : copy.profile.noTask;
+  return task.kind === "private"
+    ? copy.profile.privateBucket
+    : copy.profile.noTask;
 }
 
 /** Rows are unique by name within a day, and there is one of each nameless kind. */

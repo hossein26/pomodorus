@@ -4,13 +4,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Auth } from "@/lib/auth";
 import { copy, t } from "@/lib/copy";
-import { faDate, faDateShort, faDigits, faDuration, faHourClock } from "@/lib/format";
+import {
+  faDate,
+  faDateShort,
+  faDigits,
+  faDuration,
+  faHourClock,
+} from "@/lib/format";
 import { ProfileRoute } from "@/routes/profile";
 import { renderAt } from "@/test/render";
 
 const NOW = 1_800_000_000_000;
 
-type Task = { kind: "task" | "private" | "none"; name: string | null; totalMs: number };
+type Task = {
+  kind: "task" | "private" | "none";
+  name: string | null;
+  totalMs: number;
+};
 type Day = { day: string; totalMs: number; tasks: Task[] };
 
 /** One row of a day's detail, the way the server sends one. */
@@ -29,14 +39,22 @@ function masked(totalMs: number): Task {
  * A day is given either a total — which becomes one task's worth of work — or
  * the rows it is made of, which is what the detail is actually about.
  */
-function chart(days: number, worked: Record<string, number | Task[]> = {}): Day[] {
+function chart(
+  days: number,
+  worked: Record<string, number | Task[]> = {},
+): Day[] {
   const out: Day[] = [];
   for (let i = days - 1; i >= 0; i--) {
     const at = new Date(Date.UTC(2026, 2, 15) - i * 86_400_000);
     const day = at.toISOString().slice(0, 10);
     const of = worked[day] ?? 0;
-    const tasks = typeof of === "number" ? (of > 0 ? [task("درس", of)] : []) : of;
-    out.push({ day, totalMs: tasks.reduce((sum, row) => sum + row.totalMs, 0), tasks });
+    const tasks =
+      typeof of === "number" ? (of > 0 ? [task("درس", of)] : []) : of;
+    out.push({
+      day,
+      totalMs: tasks.reduce((sum, row) => sum + row.totalMs, 0),
+      tasks,
+    });
   }
   return out;
 }
@@ -65,22 +83,30 @@ function server({
     asked.push(input);
     if (hold) return new Promise<Response>(() => {});
     if (status !== 200) {
-      return new Response(JSON.stringify({ error: "profile_not_found", serverNow: NOW }), {
-        status,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ error: "profile_not_found", serverNow: NOW }),
+        {
+          status,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }
-    return new Response(JSON.stringify({ handle, days, everFocused, owner, serverNow: NOW }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ handle, days, everFocused, owner, serverNow: NOW }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
   });
   vi.stubGlobal("fetch", fetched);
   return { asked, fetched };
 }
 
-const renderProfile = (handle = "yazdan", auth: Auth = { status: "anonymous" }) =>
-  renderAt(<ProfileRoute />, { path: `/u/${handle}`, auth });
+const renderProfile = (
+  handle = "yazdan",
+  auth: Auth = { status: "anonymous" },
+) => renderAt(<ProfileRoute />, { path: `/u/${handle}`, auth });
 
 /**
  * jsdom does no layout, so every box measures zero and the responsive wrapper
@@ -100,7 +126,20 @@ beforeEach(() => {
       constructor(private readonly notify: ResizeObserverCallback) {}
       observe(target: Element) {
         this.notify(
-          [{ target, contentRect: { ...CHART_BOX, top: 0, left: 0, bottom: 176, right: 600, x: 0, y: 0 } } as ResizeObserverEntry],
+          [
+            {
+              target,
+              contentRect: {
+                ...CHART_BOX,
+                top: 0,
+                left: 0,
+                bottom: 176,
+                right: 600,
+                x: 0,
+                y: 0,
+              },
+            } as ResizeObserverEntry,
+          ],
           this as unknown as ResizeObserver,
         );
       }
@@ -134,7 +173,9 @@ describe("a public profile", () => {
     renderProfile("yazdan", { status: "authenticated", handle: "yazdan" });
 
     await screen.findByRole("heading", { name: copy.profile.title });
-    expect(screen.getByRole("button", { name: new RegExp(copy.header.signOut) })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: new RegExp(copy.header.signOut) }),
+    ).toBeTruthy();
   });
 
   it("offers no way out on somebody else's profile", async () => {
@@ -142,7 +183,9 @@ describe("a public profile", () => {
     renderProfile("someone", { status: "authenticated", handle: "yazdan" });
 
     await screen.findByRole("heading", { name: "someone" });
-    expect(screen.queryByRole("button", { name: new RegExp(copy.header.signOut) })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: new RegExp(copy.header.signOut) }),
+    ).toBeNull();
   });
 
   it("says so when nobody has that handle", async () => {
@@ -152,7 +195,9 @@ describe("a public profile", () => {
     // Not an empty chart: a flat line for somebody who does not exist would
     // read as a real person who never worked.
     await screen.findByText(copy.profile.notFound);
-    expect(screen.queryByRole("heading", { name: copy.profile.focusPerDay })).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: copy.profile.focusPerDay }),
+    ).toBeNull();
   });
 
   it("shows the empty state for somebody who has never focused", async () => {
@@ -194,7 +239,9 @@ describe("the range presets", () => {
 
     for (const days of [7, 30, 90]) {
       expect(
-        screen.getByRole("button", { name: t(copy.profile.rangeDays, { n: faDigits(days) }) }),
+        screen.getByRole("button", {
+          name: t(copy.profile.rangeDays, { n: faDigits(days) }),
+        }),
       ).toBeTruthy();
     }
     // And says which one is on, since there is no hue to mark it with.
@@ -210,14 +257,18 @@ describe("the range presets", () => {
 
     await waitFor(() => expect(asked).toHaveLength(1));
     await userEvent.click(
-      screen.getByRole("button", { name: t(copy.profile.rangeDays, { n: faDigits(90) }) }),
+      screen.getByRole("button", {
+        name: t(copy.profile.rangeDays, { n: faDigits(90) }),
+      }),
     );
 
     await waitFor(() => expect(asked[asked.length - 1]).toContain("days=90"));
     await waitFor(() =>
       expect(
         screen
-          .getByRole("button", { name: t(copy.profile.rangeDays, { n: faDigits(90) }) })
+          .getByRole("button", {
+            name: t(copy.profile.rangeDays, { n: faDigits(90) }),
+          })
           .getAttribute("aria-pressed"),
       ).toBe("true"),
     );
@@ -232,16 +283,24 @@ describe("the range presets", () => {
     // Hold the next answer open, then switch range.
     fetched.mockImplementation(() => new Promise<Response>(() => {}));
     await userEvent.click(
-      screen.getByRole("button", { name: t(copy.profile.rangeDays, { n: faDigits(30) }) }),
+      screen.getByRole("button", {
+        name: t(copy.profile.rangeDays, { n: faDigits(30) }),
+      }),
     );
 
     // The heading and the buttons have not moved; only the chart area is a
     // skeleton. Switching range must not reflow the page under the finger
     // that pressed it.
-    await waitFor(() => expect(container.querySelector(".h-44.animate-pulse")).toBeTruthy());
-    expect(screen.getByRole("heading", { name: copy.profile.focusPerDay })).toBeTruthy();
+    await waitFor(() =>
+      expect(container.querySelector(".h-44.animate-pulse")).toBeTruthy(),
+    );
     expect(
-      screen.getByRole("button", { name: t(copy.profile.rangeDays, { n: faDigits(30) }) }),
+      screen.getByRole("heading", { name: copy.profile.focusPerDay }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", {
+        name: t(copy.profile.rangeDays, { n: faDigits(30) }),
+      }),
     ).toBeTruthy();
   });
 });
@@ -254,7 +313,9 @@ describe("the focus chart", () => {
     await waitFor(() => expect(container.querySelector("svg")).toBeTruthy());
     // One series, one line. No legend, because the heading names it.
     await waitFor(() =>
-      expect(container.querySelectorAll("path.recharts-line-curve").length).toBe(1),
+      expect(
+        container.querySelectorAll("path.recharts-line-curve").length,
+      ).toBe(1),
     );
   });
 
@@ -262,7 +323,9 @@ describe("the focus chart", () => {
     server();
     const { container } = renderProfile();
 
-    await waitFor(() => expect(container.querySelector(".recharts-xAxis")).toBeTruthy());
+    await waitFor(() =>
+      expect(container.querySelector(".recharts-xAxis")).toBeTruthy(),
+    );
 
     // «۲۴ اسفند» — day and month, no year, in Persian digits. Read off the
     // rendered SVG text rather than a scoped query, because recharts puts the
@@ -303,6 +366,20 @@ describe("the day detail", () => {
     expect(screen.getByText(copy.profile.focusedHours)).toBeTruthy();
   });
 
+  it("keeps the day's clock flush right with the date and unit around it", async () => {
+    server({ days: chart(7, { "2026-03-13": 75 * 60_000 }) });
+    renderProfile();
+
+    const clock = await screen.findByText(faHourClock(75 * 60_000));
+    // Isolated so h:mm reads left to right...
+    expect(clock.tagName).toBe("BDI");
+    expect(clock.getAttribute("dir")).toBe("ltr");
+    // ...but the block around it stays in the page's direction. Flipping that
+    // to ltr also flips its text-align, and the clock drifts off the right
+    // margin while the date above and the unit below stay on it.
+    expect(clock.closest("p")?.getAttribute("dir")).toBeNull();
+  });
+
   it("puts a picture beside the total, and keeps it there", async () => {
     server({ days: chart(7, { "2026-03-15": 75 * 60_000 }) });
     const { container } = renderProfile();
@@ -333,13 +410,17 @@ describe("the day detail", () => {
     ]);
     // The bars are shares of the day, which is what makes the rows comparable
     // at a glance — the durations beside them are the exact answer.
-    const bars = rows.map((row) => row.querySelector<HTMLElement>(".bg-chart-1")?.style.width);
+    const bars = rows.map(
+      (row) => row.querySelector<HTMLElement>(".bg-chart-1")?.style.width,
+    );
     expect(bars).toEqual(["75%", "25%"]);
   });
 
   it("shows a visitor one masked row for all the private tasks", async () => {
     server({
-      days: chart(7, { "2026-03-15": [masked(50 * 60_000), task("درس", 25 * 60_000)] }),
+      days: chart(7, {
+        "2026-03-15": [masked(50 * 60_000), task("درس", 25 * 60_000)],
+      }),
     });
     renderProfile();
 
@@ -353,7 +434,9 @@ describe("the day detail", () => {
 
   it("names an untasked row without masking it", async () => {
     server({
-      days: chart(7, { "2026-03-15": [{ kind: "none", name: null, totalMs: 25 * 60_000 }] }),
+      days: chart(7, {
+        "2026-03-15": [{ kind: "none", name: null, totalMs: 25 * 60_000 }],
+      }),
     });
     renderProfile();
 
@@ -427,7 +510,9 @@ describe("pointing at the chart", () => {
 
     // The panel always has a visible anchor on the line it came from: a dot on
     // the day, and a faint crosshair down it.
-    await waitFor(() => expect(container.querySelector(".recharts-reference-dot")).toBeTruthy());
+    await waitFor(() =>
+      expect(container.querySelector(".recharts-reference-dot")).toBeTruthy(),
+    );
     expect(container.querySelector(".recharts-reference-line")).toBeTruthy();
   });
 
@@ -442,7 +527,9 @@ describe("pointing at the chart", () => {
     // dissolving them through each other would shunt the page around under
     // whoever is reading it. While the outgoing panel is fading, it is still
     // the only one there.
-    await waitFor(() => expect(container.querySelector(".opacity-0")).toBeTruthy());
+    await waitFor(() =>
+      expect(container.querySelector(".opacity-0")).toBeTruthy(),
+    );
     expect(screen.getByText(faDate("2026-03-15"))).toBeTruthy();
     expect(screen.queryByText(faDate("2026-03-10"))).toBeNull();
 
@@ -479,6 +566,8 @@ describe("pointing at the chart", () => {
     // pointed at; the panel is simply not rendered for it.
     await point(container, 300);
 
-    await waitFor(() => expect(screen.queryByText(copy.profile.focusedHours)).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByText(copy.profile.focusedHours)).toBeNull(),
+    );
   });
 });
