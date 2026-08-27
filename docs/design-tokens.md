@@ -145,11 +145,11 @@ all three plus the font: Sonner sets its own `font-family` on the toast, and
 without `!font-sans` the Persian falls back to the system face. The «کد رفت»
 notice is a toast rather than a panel on the page.
 
-**Login code step** — the address appears only in the «کد رفت» toast, which
-therefore runs for a minute rather than Sonner's four seconds. There is no
-banner and no way back to the address field, so that toast is the whole record
-of where the code went; shorten it and a code sent to a mistyped inbox leaves
-nothing on screen to say so.
+**Login code step** — the address appears only in the «کد ارسال شد» toast,
+which runs for six seconds rather than Sonner's four. There is no banner and no
+way back to the address field, so that toast is the only sighting of where the
+code went: long enough to read the address back, and deliberately not long
+enough to sit over the form while somebody types into it.
 
 The submit and the link home are a matched pair — both `w-full`, both the
 default `h-10`, one `space-y-4` apart. The link is `ghost`. A smaller or

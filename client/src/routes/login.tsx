@@ -141,11 +141,11 @@ function EmailStep({
 function announceSent(email: string) {
   const [before = "", after = ""] = copy.login.sentBody.split("{email}");
   toast(copy.login.sentTitle, {
-    // Long, because this is now the only place the address appears. There is
-    // no banner behind it and no way back to the address field, so a toast
-    // that vanished in four seconds would leave a code sent to a mistyped
-    // inbox with nothing on screen to say so.
-    duration: 60_000,
+    // Longer than Sonner's four seconds, because this is the only place the
+    // address appears — there is no banner behind it and no way back to the
+    // address field. Six is a read, not a record: long enough to catch a
+    // mistyped address, short enough not to sit over the form.
+    duration: 6_000,
     description: (
       <>
         {before}

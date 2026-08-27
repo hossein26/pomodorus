@@ -90,7 +90,7 @@ describe("the login screen", () => {
     expect(await screen.findByText(/yazdan@example\.com/)).toBeTruthy();
   });
 
-  it("holds that toast long enough to be the record it now is", async () => {
+  it("holds that toast past Sonner's own default, since it is the only sighting", async () => {
     server({ "/api/auth/request-code": ok });
     renderAt(
       <>
@@ -103,8 +103,8 @@ describe("the login screen", () => {
     await submitEmail();
     await screen.findByText(/yazdan@example\.com/);
 
-    // Sonner's default is four seconds, which is not long enough to be the one
-    // surviving record of where a login code went.
+    // Sonner's default is four seconds; this one has to outlast that, because
+    // it is the only place the address is shown at all.
     await new Promise((settle) => setTimeout(settle, 4500));
     expect(screen.getAllByText(/yazdan@example\.com/).length).toBeGreaterThan(
       0,
