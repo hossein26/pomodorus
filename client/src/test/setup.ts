@@ -16,6 +16,14 @@ if (!("ResizeObserver" in globalThis)) {
 // Nor does it implement scrollIntoView, which cmdk calls for the same reason.
 Element.prototype.scrollIntoView ??= () => {};
 
+// Nor elementFromPoint, which is layout again: Sonner asks what is under the
+// pointer to decide whether a toast is being hovered or swiped. It asks on a
+// timer, so the throw lands *after* whichever test raised the toast has already
+// passed — an uncaught exception attributed to a test that did nothing wrong.
+// Nothing is under a point in a document with no layout, so null is the honest
+// answer rather than a stand-in.
+document.elementFromPoint ??= () => null;
+
 // Vitest is run without globals, so React Testing Library's own auto-cleanup
 // never registers itself. Unmounting between tests is what stops one test's
 // document from being queryable in the next.
