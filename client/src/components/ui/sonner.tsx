@@ -19,7 +19,7 @@ export function Toaster(props: ToasterProps) {
   return (
     <Sonner
       dir="rtl"
-      position="top-center"
+      position="bottom-center"
       // Sonner's own theme switch would pick light from the OS; this app is
       // one theme and the tokens below already say which.
       theme="dark"

@@ -45,20 +45,26 @@ export function LoginRoute() {
             {copy.app.name}
           </h1>
 
-          {sentTo === null ? (
-            <EmailStep email={email} onEmail={setEmail} onSent={setSentTo} />
-          ) : (
-            <CodeStep email={sentTo} />
-          )}
+          {/* The step and the way out are one group, so the gap between the
+              submit and the link below it is the form's own rhythm rather than
+              the wider gap that separates the wordmark from everything. */}
+          <div className="space-y-4">
+            {sentTo === null ? (
+              <EmailStep email={email} onEmail={setEmail} onSent={setSentTo} />
+            ) : (
+              <CodeStep email={sentTo} />
+            )}
 
-          {/* Without this a signed-out visitor has no way back to the landing
-              but the browser's own. */}
-          <Button asChild variant="ghost" size="sm" className="w-full">
-            <Link to="/" className="gap-1 text-xs">
-              <ArrowRight className="size-3" />
-              {copy.login.backHome}
-            </Link>
-          </Button>
+            {/* Without this a signed-out visitor has no way back to the landing
+                but the browser's own. Same size and width as the submit above
+                it: they are a pair, and a smaller one reads as a footnote. */}
+            <Button asChild variant="ghost" className="w-full">
+              <Link to="/">
+                <ArrowRight className="size-4" />
+                {copy.login.backHome}
+              </Link>
+            </Button>
+          </div>
         </div>
       </div>
     </main>
@@ -135,6 +141,11 @@ function EmailStep({
 function announceSent(email: string) {
   const [before = "", after = ""] = copy.login.sentBody.split("{email}");
   toast(copy.login.sentTitle, {
+    // Long, because this is now the only place the address appears. There is
+    // no banner behind it and no way back to the address field, so a toast
+    // that vanished in four seconds would leave a code sent to a mistyped
+    // inbox with nothing on screen to say so.
+    duration: 60_000,
     description: (
       <>
         {before}
@@ -175,16 +186,6 @@ function CodeStep({ email }: { email: string }) {
 
   return (
     <div className="space-y-4">
-      {/* The address, written down. The toast that announced it dismisses
-          itself after a few seconds, and a mistyped address is invisible
-          unless it is somewhere that stays — this is the only thing on the
-          screen that can tell you the code went to the wrong inbox. */}
-      <p className="border border-border bg-card px-3 py-2 text-center text-xs text-muted-foreground">
-        <span dir="ltr" className="font-latin">
-          {email}
-        </span>
-      </p>
-
       <form onSubmit={submit} className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="code">{copy.login.code}</Label>

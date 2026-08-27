@@ -139,17 +139,22 @@ read off a screen left to right and typed the same way, and `dir` passed to
 `InputOTP` lands on its hidden input rather than the row, which then inherits
 the page's rtl and fills backwards.
 
-**Toasts** — Sonner, top-centre, `dir="rtl"`. Its defaults are rounded, shadowed
+**Toasts** — Sonner, **bottom-centre**, `dir="rtl"`. Its defaults are rounded, shadowed
 and separately themed, so the wrapper in `components/ui/sonner.tsx` overrides
 all three plus the font: Sonner sets its own `font-family` on the toast, and
 without `!font-sans` the Persian falls back to the system face. The «کد رفت»
 notice is a toast rather than a panel on the page.
 
-**Login code step** — the address is repeated in a bordered banner above the
-form (`border border-border bg-card`, muted, centred, the address itself
-`dir="ltr" font-latin`). It is not decoration: the toast dismisses itself, and
-there is no way back to the address field from here, so the banner is the only
-thing on the screen that can reveal a code sent to a mistyped inbox.
+**Login code step** — the address appears only in the «کد رفت» toast, which
+therefore runs for a minute rather than Sonner's four seconds. There is no
+banner and no way back to the address field, so that toast is the whole record
+of where the code went; shorten it and a code sent to a mistyped inbox leaves
+nothing on screen to say so.
+
+The submit and the link home are a matched pair — both `w-full`, both the
+default `h-10`, one `space-y-4` apart. The link is `ghost`. A smaller or
+tighter-set second button reads as a footnote rather than the other half of a
+choice.
 
 **Page padding** — `p-6` is the standard page inset; the timer uses
 `p-4 sm:p-6`.

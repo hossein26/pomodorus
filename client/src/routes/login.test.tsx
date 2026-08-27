@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { copy } from "@/lib/copy";
+import { toast } from "sonner";
+
 import { Toaster } from "@/components/ui/sonner";
 import { LoginRoute } from "@/routes/login";
 import { renderAt } from "@/test/render";
@@ -34,6 +36,9 @@ const failure = (status: number, error: string) => () =>
 
 beforeEach(() => {
   vi.unstubAllGlobals();
+  // Sonner's store is module-level and outlives the component, so a toast
+  // raised by one test is re-rendered by the next test's Toaster.
+  toast.dismiss();
 });
 
 async function submitEmail(address = "yazdan@example.com") {
@@ -79,22 +84,32 @@ describe("the login screen", () => {
     await submitEmail();
 
     expect(await screen.findByLabelText(copy.login.code)).toBeTruthy();
-    // Twice on purpose: the toast says it went, the banner keeps saying where.
-    // A toast dismisses itself, and with no way back to the address field the
-    // banner is the only thing left that can reveal a typo.
-    expect(await screen.findAllByText(/yazdan@example\.com/)).toHaveLength(2);
+    // The toast is the only place the address is repeated back — there is no
+    // banner behind it and no way back to the address field — so a typo is
+    // invisible unless this is on screen.
+    expect(await screen.findByText(/yazdan@example\.com/)).toBeTruthy();
   });
 
-  it("keeps the address on the code step after the toast has gone", async () => {
+  it("holds that toast long enough to be the record it now is", async () => {
     server({ "/api/auth/request-code": ok });
-    renderAt(<LoginRoute />, { path: "/login" });
+    renderAt(
+      <>
+        <Toaster />
+        <LoginRoute />
+      </>,
+      { path: "/login" },
+    );
 
     await submitEmail();
-    await screen.findByLabelText(copy.login.code);
+    await screen.findByText(/yazdan@example\.com/);
 
-    // No Toaster is mounted here, so this is the banner and nothing else.
-    expect(screen.getByText("yazdan@example.com")).toBeTruthy();
-  });
+    // Sonner's default is four seconds, which is not long enough to be the one
+    // surviving record of where a login code went.
+    await new Promise((settle) => setTimeout(settle, 4500));
+    expect(screen.getAllByText(/yazdan@example\.com/).length).toBeGreaterThan(
+      0,
+    );
+  }, 10_000);
 
   it("takes the code in six boxes, one per digit", async () => {
     server({ "/api/auth/request-code": ok });
