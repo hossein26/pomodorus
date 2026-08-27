@@ -62,12 +62,13 @@ describe("feed row direction", () => {
 
     const parts = (await row()).querySelectorAll("bdi");
     expect(parts).toHaveLength(2);
+    const [handlePart, taskPart] = Array.from(parts);
     // Handle first, task second — in that order, always, whatever the task is
     // written in. With both sides isolated this document order is also the
     // visual order, because the dash between them can no longer be folded into
     // a left-to-right run by its neighbours.
-    expect(parts[0].textContent).toBe("yazdanctx");
-    expect(parts[1].textContent).toBe(task);
+    expect(handlePart?.textContent).toBe("yazdanctx");
+    expect(taskPart?.textContent).toBe(task);
   });
 
   it("isolates the break label too, which is not user-supplied but shares the row", async () => {
