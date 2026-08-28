@@ -43,6 +43,10 @@ type feedResponse struct {
 	ServerNow int64       `json:"serverNow"`
 }
 
+// pinnedHandle sits at the top of the feed whenever it is live. Handles are
+// stored lowercase (identity.NormalizeHandle), so an exact match is enough.
+const pinnedHandle = "yazdanctx"
+
 // feedChanged is "somebody started or stopped".
 const feedChanged = "feed"
 
@@ -77,6 +81,16 @@ func (s *Server) feed(ctx context.Context, now time.Time) (feedResponse, error) 
 	for _, row := range rows {
 		if entry, ok := feedEntryFor(row); ok {
 			entries = append(entries, entry)
+		}
+	}
+
+	// The pinned handle moves to the front; everybody else keeps their order.
+	for i := range entries {
+		if entries[i].Handle == pinnedHandle {
+			pinned := entries[i]
+			copy(entries[1:i+1], entries[:i])
+			entries[0] = pinned
+			break
 		}
 	}
 	return feedResponse{Entries: entries, ServerNow: now.UnixMilli()}, nil
