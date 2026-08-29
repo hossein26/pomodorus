@@ -47,11 +47,37 @@ type Wordlist struct {
 	LatinParts []string `json:"latinParts"`
 }
 
+// term is one wordlist entry with everything about it that does not depend on
+// the text worked out once, at init.
+//
+// It is precomputed because Contains sits on the hottest read in the app: the
+// feed re-checks every handle and every public task name on it, so one page of
+// the landing runs the whole list hundreds of times. Everything below was
+// previously rebuilt on each of those — the join, the rune counts, and, worst,
+// a fresh string per suffix per term — which made a single feed read cost a
+// third of a second of CPU. None of it varies with the text.
+type term struct {
+	// head is every part but the last, and last is the part the suffixes
+	// attach to. A single-word term has an empty head, which is the common
+	// case and the one the loop below is shaped around.
+	head      []string
+	last      string
+	lastRunes int
+	partCount int
+	// joined is the term typed as one word — «کس کش» as «کسکش» — empty for a
+	// term that is one word already and so has nothing to join.
+	joined      string
+	joinedRunes int
+}
+
 var (
-	terms      [][]string
+	terms      []term
 	allowed    map[string]bool
 	latinWords map[string]bool
 	latinParts []string
+	// The suffix list as a set, so `carries` can ask what remains after the
+	// term rather than building term+suffix for all twenty of them.
+	suffixSet map[string]bool
 )
 
 func init() {
@@ -62,12 +88,24 @@ func init() {
 		panic("profanity: unreadable wordlist: " + err.Error())
 	}
 
-	for _, term := range append(append([]string{}, w.Fa...), w.FaBlocked...) {
-		terms = append(terms, strings.Split(term, " "))
+	for _, entry := range append(append([]string{}, w.Fa...), w.FaBlocked...) {
+		parts := strings.Split(entry, " ")
+		t := term{
+			head:      parts[:len(parts)-1],
+			last:      parts[len(parts)-1],
+			partCount: len(parts),
+		}
+		t.lastRunes = utf8.RuneCountInString(t.last)
+		if len(parts) > 1 {
+			t.joined = strings.Join(parts, "")
+			t.joinedRunes = utf8.RuneCountInString(t.joined)
+		}
+		terms = append(terms, t)
 	}
 	allowed = set(w.FaAllow)
 	latinWords = set(w.LatinWords)
 	latinParts = w.LatinParts
+	suffixSet = set(suffixes)
 }
 
 func set(items []string) map[string]bool {
@@ -88,12 +126,27 @@ func Contains(text string) bool {
 		return false
 	}
 
-	var tokens []string
-	for _, token := range spelledOut(strings.Split(normalized, " ")) {
+	// The words as typed, and separately the words a run of single letters
+	// spells out — `k_o_s` is `kos`, typed apart. The two are kept apart
+	// because only the second is worth scanning again below.
+	split := strings.Split(normalized, " ")
+	spelled := spelledOut(split)
+
+	tokens := make([]string, 0, len(split)+len(spelled))
+	for _, token := range split {
 		if !allowed[token] {
 			tokens = append(tokens, token)
 		}
 	}
+	// The tail of `tokens` is the spelled-out runs, and `joined` is a window
+	// onto exactly that tail.
+	at := len(tokens)
+	for _, token := range spelled {
+		if !allowed[token] {
+			tokens = append(tokens, token)
+		}
+	}
+	joined := tokens[at:]
 
 	for _, token := range tokens {
 		if latinWords[token] {
@@ -101,21 +154,25 @@ func Contains(text string) bool {
 		}
 	}
 
-	// Against the tokens as well as the whole text, or `k_o_s_k_e_s_h` would
-	// slip past: the run only becomes the word it spells once it is joined.
+	// The whole text catches every part as typed. The spelled-out runs are
+	// scanned as well, and only they: a word that was typed as a word is
+	// already inside `normalized`, so looking through it a second time would
+	// be asking the same question 328 times per word — which is what this
+	// loop cost before. A run only becomes the word it spells once it is
+	// joined, and that join is in none of the text.
 	for _, part := range latinParts {
 		if strings.Contains(normalized, part) {
 			return true
 		}
-		for _, token := range tokens {
+		for _, token := range joined {
 			if strings.Contains(token, part) {
 				return true
 			}
 		}
 	}
 
-	for _, parts := range terms {
-		if matches(tokens, parts) {
+	for i := range terms {
+		if matches(tokens, terms[i]) {
 			return true
 		}
 	}
@@ -256,40 +313,43 @@ const substringMin = 6
 
 // carries reports whether one word is `term`, in any of the forms that are
 // still that word.
-func carries(word, term string) bool {
+//
+// `runes` is the term's length in runes, passed in rather than measured here:
+// it is a fact about the wordlist, and the wordlist is fixed at build time.
+//
+// The inflected forms are recognised by cutting the term off the front and
+// asking whether what is left is a suffix, rather than by building `term +
+// suffix` twenty times and comparing each. The two say the same thing —
+// `word == term+suffix` is exactly "word starts with term and the rest is
+// suffix" — but the second allocates and copies a string per suffix per term
+// per word, which was the whole cost of this package.
+func carries(word, term string, runes int) bool {
 	if word == term {
 		return true
 	}
-	length := utf8.RuneCountInString(term)
-	if length < inflectMin {
+	if runes < inflectMin {
 		return false
 	}
-	if length >= substringMin && strings.Contains(word, term) {
+	if runes >= substringMin && strings.Contains(word, term) {
 		return true
 	}
-	for _, suffix := range suffixes {
-		if word == term+suffix {
-			return true
-		}
-	}
-	return false
+	rest, ok := strings.CutPrefix(word, term)
+	return ok && suffixSet[rest]
 }
 
 // matches reports whether the tokens carry a term. A multi-word term also
 // counts when it is typed as one word: «کس کش» / «کسکش».
-func matches(tokens, parts []string) bool {
-	if len(parts) > 1 {
-		joined := strings.Join(parts, "")
+func matches(tokens []string, t term) bool {
+	if t.joined != "" {
 		for _, token := range tokens {
-			if carries(token, joined) {
+			if carries(token, t.joined, t.joinedRunes) {
 				return true
 			}
 		}
 	}
 
-	head, last := parts[:len(parts)-1], parts[len(parts)-1]
-	for i := 0; i+len(parts) <= len(tokens); i++ {
-		if headMatches(tokens[i:], head) && carries(tokens[i+len(head)], last) {
+	for i := 0; i+t.partCount <= len(tokens); i++ {
+		if headMatches(tokens[i:], t.head) && carries(tokens[i+len(t.head)], t.last, t.lastRunes) {
 			return true
 		}
 	}
@@ -305,12 +365,14 @@ func headMatches(tokens, head []string) bool {
 	return true
 }
 
-// spelledOut joins runs of single letters into the word they spell — `س ک س`
-// and `k_o_s` are one word, typed apart. The joined word is added as an extra
-// token rather than replacing the run, so the separators the run sits between
+// spelledOut is the words that runs of single letters spell — `س ک س` and
+// `k_o_s` are one word, typed apart.
+//
+// It returns only the joins, which the caller adds alongside the tokens it was
+// given rather than in place of them, so the separators the run sits between
 // still read as separators.
 func spelledOut(tokens []string) []string {
-	out := append([]string{}, tokens...)
+	var out []string
 
 	var run []string
 	flush := func() {
