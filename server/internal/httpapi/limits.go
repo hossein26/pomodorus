@@ -67,15 +67,29 @@ func (s *Server) spendWrite(w http.ResponseWriter, user db.User) bool {
 	return false
 }
 
-// limited is the per-address backstop, wrapped around the API.
+// metered is the set of paths the per-address backstop covers: everything that
+// reaches the database without a session behind it.
 //
-// Only /api. The client's own assets are not limited, because one page load is
-// a dozen of them and a cold cache is not abuse; the socket is not limited here
-// either, because what a socket costs is the connection rather than the
-// request, and openSockets below is what bounds that.
+// /api is the obvious half. /u is the half that is easy to miss: it is a
+// client-side route, so it is served by the SPA handler rather than by the mux
+// above — but rendering it looks the handle up, to decide whether the link
+// previews as a person or as the app. That is a query per request on an
+// unauthenticated path, which is the same thing the two public reads are, and
+// it was the one way into the connection pool that nothing bounded.
+//
+// The client's own assets are deliberately not here, because one page load is
+// a dozen of them and a cold cache is not abuse. Neither is the socket: what a
+// socket costs is the connection rather than the request, and openSockets
+// below is what bounds that.
+func metered(path string) bool {
+	return strings.HasPrefix(path, "/api/") ||
+		path == "/u" || strings.HasPrefix(path, "/u/")
+}
+
+// limited is the per-address backstop, wrapped around the API.
 func (s *Server) limited(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/api/") {
+		if !metered(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
