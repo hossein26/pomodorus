@@ -1,102 +1,33 @@
 .DEFAULT_GOAL := help
-.PHONY: help up down logs dev server client build run test test-server test-client vapid profanity fmt tidy psql mail deploy clean
+.PHONY: help dev electron build dist test clean
 
 ## help: list targets
 help:
 	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/## //' | awk -F': ' '{printf "  \033[1m%-14s\033[0m %s\n", $$1, $$2}'
 
-## up: start Postgres and Mailpit
-up:
-	docker compose up -d
-	@echo "postgres :5433   mailpit smtp :1025   mailpit inbox http://localhost:8025"
-
-## down: stop them (data survives)
-down:
-	docker compose down
-
-## logs: tail the containers
-logs:
-	docker compose logs -f
-
-## dev: run the Go API and the Vite client together
-# The client is served by Vite and proxies /api and /ws to the Go server, so
-# the browser stays on one origin and cookies behave as they will in prod.
-dev: up
-	@trap 'kill 0' INT TERM EXIT; \
-	(cd server && go run ./cmd/server) & \
-	(cd client && npm run dev) & \
-	wait
-
-## server: run only the Go API
-server: up
-	cd server && go run ./cmd/server
-
-## client: run only the Vite dev server
-client:
+## dev: run the Vite client
+dev:
 	cd client && npm run dev
 
-## build: build the client into the binary, producing one deployable artifact
+## electron: run the Mac shell against the dev server
+# Terminal one runs `make dev`; this is terminal two. The shell loads
+# http://localhost:5174, so the page it shows is the code being edited.
+electron:
+	cd client && npm run electron
+
+## build: typecheck and build the offline web bundle into client/dist
 build:
 	cd client && npm run build
-	@# The embedded file list is cached by the Go build; touching the embedding
-	@# file is what makes a client-only change actually reach the binary.
-	touch server/internal/web/web.go
-	cd server && go build -o ../bin/pomodorus ./cmd/server
-	@echo "built bin/pomodorus"
 
-## run: run the built binary (serves the API and the client on :8081)
-run: build
-	./bin/pomodorus
+## dist: build Pomodorus-*.dmg (and .zip) for Apple Silicon into client/release
+dist: build
+	cd client && npx electron-builder --mac --publish never
+	@echo "artifact: client/release/Pomodorus-*-arm64.dmg"
 
-## test: run every test
-test: test-server test-client
-
-## test-server: Go tests (integration tests need `make up`)
-test-server:
-	cd server && go test ./...
-
-## test-client: Vitest
-test-client:
+## test: run the Vitest suite
+test:
 	cd client && npm test
 
-## vapid: print a fresh VAPID keypair for a deployment's environment
-# Once per deployment, and keep the answer: the keypair is this server's
-# permanent name to the push services, and replacing it silently invalidates
-# every subscription any browser has ever handed over.
-vapid:
-	@cd server && go run ./cmd/vapid
-
-## profanity: rebuild the wordlist from its public sources (needs a network)
-# Words are added in cmd/build-profanity, never in the generated JSON — a
-# hand-edit is silently undone by the next run, and its own test says so.
-profanity:
-	cd server && go run ./cmd/build-profanity
-
-## fmt: format Go
-fmt:
-	cd server && go fmt ./...
-
-## tidy: tidy Go modules
-tidy:
-	cd server && go mod tidy
-
-## psql: open a shell on the dev database
-psql:
-	docker exec -it pomodorus-postgres psql -U pomodorus -d pomodorus
-
-## mail: open the Mailpit inbox
-mail:
-	open http://localhost:8025
-
-## deploy: ship to Liara (see docs/deploy-liara.md)
-# The image builds the client itself, so this needs no local build — but it
-# does need the app's environment to already be set, since a production boot
-# without a VAPID keypair is a refused boot.
-deploy:
-	liara deploy
-
-## clean: remove build output and the database volume
+## clean: remove build output
 clean:
-	rm -rf bin server/internal/web/dist/*
-	touch server/internal/web/dist/.gitkeep
-	docker compose down -v
+	rm -rf client/dist client/release

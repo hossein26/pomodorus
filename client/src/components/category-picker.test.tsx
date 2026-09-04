@@ -7,7 +7,7 @@ import {
   CategoryPicker,
   type CategoryActions,
 } from "@/components/category-picker";
-import { ApiError } from "@/lib/api";
+import { LocalError } from "@/lib/errors";
 import type { Category } from "@/lib/categories";
 import { copy, t } from "@/lib/copy";
 import { renderAt } from "@/test/render";
@@ -143,7 +143,7 @@ describe("the category picker", () => {
 
   it("shows why a name was refused, and stays on the form", async () => {
     const create = vi.fn(() =>
-      Promise.reject(new ApiError("category_name_profane", 400)),
+      Promise.reject(new LocalError("category_name_length")),
     );
     const { user } = renderPicker([], { create });
 
@@ -155,7 +155,7 @@ describe("the category picker", () => {
     await user.click(screen.getByRole("button", { name: copy.categories.add }));
 
     expect(
-      await screen.findByText(copy.errors.categoryNameProfane),
+      await screen.findByText(copy.errors.categoryNameLength),
     ).toBeTruthy();
     expect(screen.getByLabelText(copy.categories.namePlaceholder)).toBeTruthy();
   });

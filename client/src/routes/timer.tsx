@@ -13,14 +13,15 @@ import {
 } from "@/components/timer/stepper";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { messageFor } from "@/lib/api";
+import { Switch } from "@/components/ui/switch";
+import { messageFor } from "@/lib/errors";
 import { useCategories } from "@/lib/categories";
 import { copy } from "@/lib/copy";
 import { faClock, faElapsed } from "@/lib/format";
 import type { Intervals } from "@/lib/intervals";
 import { usePersisted } from "@/lib/persisted";
-import { enableNotifications } from "@/lib/push";
 import { useTick } from "@/lib/server-clock";
+import { inElectron, setAutoStart } from "@/lib/tray";
 import {
   breakSurvives,
   isBreak,
@@ -35,17 +36,12 @@ const isNullableString = (value: unknown): value is string | null =>
   value === null || typeof value === "string";
 
 /**
- * A user gesture is the only moment a browser will unlock audio or show the
- * permission prompt, and both are for a bell that is still 25 minutes away.
- * Asked for whenever something is started, or the ring arrives in silence.
- *
- * The permission is asked for once and then used by both carriers of the ring:
- * the tab's own notification, and — for the tab that is closed by the time the
- * bell goes — the push subscription this also registers.
+ * A user gesture is the only moment a browser will unlock audio, and the bell
+ * is still minutes away. Asked for whenever something is started, or the ring
+ * arrives in silence.
  */
 function primeAlerts() {
   unlockAudio();
-  void enableNotifications();
 }
 
 /** What to call a session: the task it is on, or the kind of rest it is. */
@@ -71,8 +67,8 @@ function sessionLabel(session: Session): string {
  * The picked task and the picked length live here rather than on the start
  * screen, because the ring screen needs them too: "another one" means the same
  * task at the same length, and it is offered from the far side of a break —
- * where the break itself is the better authority on what that was, and this
- * device's picks are only the fallback.
+ * where the break itself is the better authority on what that was, and these
+ * picks are only the fallback.
  *
  * The page inset is `p-4 sm:p-6` rather than the standard `p-6`: the
  * −/clock/+ row is what sets the horizontal budget on a phone.
@@ -99,8 +95,8 @@ export function TimerRoute() {
   );
 
   // A task that has been deleted since it was picked is not a task to start
-  // on, and the server would refuse it. The list is the truth; a remembered
-  // id — this device's, or the one a break came back with — is only a claim.
+  // on. The list is the truth; a remembered id — these picks, or the one a
+  // break came back with — is only a claim.
   const known = (id: string | null) =>
     id !== null && categories?.some((c) => c.id === id) ? id : null;
   const picked = known(selected);
@@ -248,8 +244,38 @@ function StartScreen({
         {/* The other three intervals, one step quieter than the button above
             them: they are a policy you set once, not a per-session choice. */}
         <SettingsDialog intervals={intervals} onSave={onIntervals} />
+
+        <AutoStartRow />
       </div>
     </div>
+  );
+}
+
+/**
+ * Launch at login, offered where the timer is set up and nowhere else.
+ *
+ * A quiet row rather than a setting that syncs anywhere: there is no account,
+ * so this is a per-Mac choice kept on the Mac. Outside the Mac shell there is
+ * no login to launch at, so the row does not exist there at all.
+ */
+function AutoStartRow() {
+  const [enabled, setEnabled] = usePersisted<boolean>(
+    "pomodorus.autostart",
+    false,
+    (value): value is boolean => typeof value === "boolean",
+  );
+  if (!inElectron()) return null;
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+      <Switch
+        checked={enabled}
+        onCheckedChange={(next) => {
+          setEnabled(next);
+          setAutoStart(next);
+        }}
+      />
+      {copy.timer.autoStart}
+    </label>
   );
 }
 

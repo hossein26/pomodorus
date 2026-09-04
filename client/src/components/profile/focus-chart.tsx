@@ -10,7 +10,7 @@ import {
 import type { MouseHandlerDataParam } from "recharts/types/synchronisation/types";
 
 import { faDateShort } from "@/lib/format";
-import type { ChartDay } from "@/lib/profile";
+import type { ChartDay } from "@/lib/stats";
 
 /**
  * The profile's focus chart: one minimal line of daily totals.

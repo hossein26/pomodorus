@@ -3,12 +3,11 @@ import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Alarm } from "@/components/alarm";
-import { AuthProvider, type AuthValue } from "@/lib/auth";
 import { copy } from "@/lib/copy";
 import { faClock, faElapsed } from "@/lib/format";
 import { noteServerTime } from "@/lib/server-clock";
 import { SessionProvider, type Session } from "@/lib/session";
-import { holding, SIGNED_IN, workSession } from "@/test/render";
+import { holding, workSession } from "@/test/render";
 
 // The noise itself is WebAudio, which jsdom does not implement and which a
 // test could not hear anyway. What is worth asserting is that the alarm is
@@ -20,13 +19,7 @@ const sound = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/sound", () => sound);
 
-// Whether the service worker is going to announce this bell. It is a fact
-// about the device rather than about the alarm, and the two carriers divide
-// the job by it — so a test says which device it is on.
-const push = vi.hoisted(() => ({ pushHandlesTheBell: vi.fn(() => false) }));
-vi.mock("@/lib/push", () => push);
-
-/** Puts the tab in the background, where a push would reach it instead. */
+// Whether the tab is in the background, where the bell still has to reach it.
 function hidden() {
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
 }
@@ -39,8 +32,6 @@ const running = () => workSession(NOW + 25 * 60_000);
 /** A session whose nominal end was `ago` milliseconds back: ringing. */
 const ringing = (ago = 1000) => workSession(NOW - ago);
 
-const auth: AuthValue = { ...SIGNED_IN, refresh: async () => {} };
-
 function Mounted({
   session,
   confirm,
@@ -50,11 +41,9 @@ function Mounted({
 }) {
   const value = holding(session, { confirm: confirm ?? (async () => null) });
   return (
-    <AuthProvider value={auth}>
-      <SessionProvider value={value}>
-        <Alarm />
-      </SessionProvider>
-    </AuthProvider>
+    <SessionProvider value={value}>
+      <Alarm />
+    </SessionProvider>
   );
 }
 
@@ -74,7 +63,6 @@ function allowNotifications(permission: NotificationPermission = "granted") {
 
 beforeEach(() => {
   vi.unstubAllGlobals();
-  push.pushHandlesTheBell.mockReturnValue(false);
   sound.startAlarm.mockClear();
   sound.stopAlarm.mockClear();
   noteServerTime(NOW, performance.now());
@@ -154,42 +142,14 @@ describe("the notification", () => {
     expect(created).not.toHaveBeenCalled();
   });
 
-  // The bell has two carriers, and between them there must be exactly one
-  // notification. The rule they share is this tab's visibility: the service
-  // worker stands down while a tab is on screen, so the tab stands down while
-  // it is not — but only where the worker is actually subscribed.
-
-  it("stands down for the service worker while the tab is hidden", () => {
+  it("announces the bell even while the tab is hidden", () => {
     const created = allowNotifications();
-    push.pushHandlesTheBell.mockReturnValue(true);
     hidden();
 
     render(<Mounted session={ringing()} />);
 
-    // Both would otherwise announce it, and a page notification and a
-    // worker's do not collapse into one whatever their tags say.
-    expect(created).not.toHaveBeenCalled();
-  });
-
-  it("announces it itself while the tab is on screen", () => {
-    const created = allowNotifications();
-    push.pushHandlesTheBell.mockReturnValue(true);
-
-    render(<Mounted session={ringing()} />);
-
-    // Here it is the worker that stands down, so this is the only carrier.
-    expect(created).toHaveBeenCalledOnce();
-  });
-
-  it("announces it from a hidden tab that has no subscription", () => {
-    const created = allowNotifications();
-    push.pushHandlesTheBell.mockReturnValue(false);
-    hidden();
-
-    render(<Mounted session={ringing()} />);
-
-    // Nothing else is going to. A browser that cannot be pushed, or somebody
-    // who never granted it, keeps exactly the behaviour it had before push.
+    // There is no other carrier any more: a hidden window announces its own
+    // bell, exactly as a visible one does.
     expect(created).toHaveBeenCalledOnce();
   });
 });

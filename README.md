@@ -1,99 +1,85 @@
 # Pomodorus
 
-A minimal Persian-language pomodoro app with a live global feed and public
-focus-time profiles.
+A minimal Persian-language pomodoro app for the Mac: a timer, your own record,
+a menu bar widget, and launch at login.
 
-React + Go + Postgres + WebSockets. The design is carried over unchanged from
-the original Next.js version; everything behind it was rewritten.
+Fully offline, no account. Everything the app knows lives on this device, in
+`localStorage`. The design is carried over unchanged from the original web
+version.
 
 ## Requirements
 
-Go 1.24+, Node 22+, Docker.
+Node 22+.
 
 ## Getting started
 
 ```bash
-make up     # Postgres on :5433, Mailpit on :1025 (inbox: localhost:8025)
-make dev    # Go API on :8081, Vite client on :5174
+cd client && npm install
+make dev       # Vite on :5174
 ```
 
-Open http://localhost:5174.
-
-There is no SMTP server to configure. Mailpit is a fake one with a web inbox,
-so login codes are readable at http://localhost:8025 — and the server uses the
-same SMTP code path locally that it uses in production, rather than a dev-only
-branch.
-
-The schema migrates itself on boot, so there is no migrate step to forget.
-
-## Web Push
-
-The bell reaches a closed tab through Web Push, which needs a VAPID keypair.
-Locally there is none and push is simply off — everything else works, and the
-ring still arrives in any open tab. To try it, generate a pair and put it in
-the server's environment:
+Or the Mac shell against the same dev server — one terminal each:
 
 ```bash
-make vapid   # prints VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT
+make dev       # terminal one
+make electron  # terminal two
 ```
 
-The keypair is permanent: replacing it silently invalidates every subscription
-any browser has ever handed over. Production refuses to boot without one.
-
-## Building
+## The Mac app
 
 ```bash
-make build   # client → server/internal/web/dist → embedded in bin/pomodorus
-./bin/pomodorus
+make dist   # Pomodorus-*-arm64.dmg (and .zip) in client/release/
 ```
 
-One binary serves the API, the WebSocket and the client.
+What the shell owns, and the page does not:
 
-## Deploying
+- **Menu bar widget** — the tray title shows the countdown while running and
+  the ring time while ringing (`● +mm:ss`); the menu offers showing the timer,
+  the login-item switch, and quitting. Closing the window parks the app in the
+  menu bar rather than quitting.
+- **The bell while hidden** — a hidden window's timers are throttled, so the
+  main process arms its own watchdog on the session's end and rings (dock
+  bounce + notification) if the window is still hidden. Ending the ring stays
+  the page's deliberate tap.
+- **Launch at login** — `setLoginItemSettings`, through the switch on the start
+  screen («با روشن شدن مک باز شو»), mirrored in the tray menu. Unsigned local
+  builds cannot register a login item; the choice is still stored and applies
+  from the first signed run.
 
-The whole app is one Docker image: the client built into the binary.
-
-On Liara, with managed Postgres and a managed email server beside it:
-
-```bash
-liara deploy   # or: make deploy
-```
-
-On a Linux box you own, as containers described by
-`deploy/docker-compose.prod.yml`:
-
-```bash
-docker compose -f deploy/docker-compose.prod.yml build
-docker compose -f deploy/docker-compose.prod.yml up -d
-```
-
-Step by step for Liara, including the parts that are not obvious — port 587 and
-not 465, the `citext` extension, the permanent VAPID keypair, and why this runs
-on one instance — see `docs/deploy-liara.md`. The runbook for the self-hosted
-deployment is not in this repository.
-
-## Testing
+Headless proof that the packaged app renders, with no display:
 
 ```bash
-make test          # everything
-make test-server   # Go (integration tests need `make up`)
-make test-client   # Vitest
+POMODORUS_SMOKE=/tmp/shot.png POMODORUS_ROUTE="#/app" ./client/release/mac-arm64/Pomodorus.app/Contents/MacOS/Pomodorus
 ```
 
 ## Layout
 
 | | |
 | --- | --- |
-| `client/` | Vite + React + TypeScript + Tailwind v4 |
-| `server/` | Go: API, WebSocket hub, embedded client |
+| `client/` | Vite + React + TypeScript + Tailwind v4, plus the Electron shell in `client/electron/` |
+| `client/src/lib/local-timer.ts` | The pomodoro's rules as pure functions (ported from the old Go timer) |
+| `client/src/lib/session.tsx` | The live session over `localStorage`: start/cancel/confirm/save |
+| `client/src/routes/stats.tsx` | Your own record, aggregated on-device |
 | `docs/design-tokens.md` | The design, as exact values |
 | `docs/reference/` | Screenshots of v1 — the pixel target |
 | `docs/adr/` | Architecture decisions and why |
 
-## The previous version
+## Testing
+
+```bash
+make test   # Vitest
+```
+
+The suite's seam is storage: tests seed `localStorage` and assert what is on
+screen. Note: on Node 26 the global `localStorage` is an unusable experimental
+stub that shadows jsdom's — `src/test/setup.ts` stands in an in-memory one.
+
+## The previous versions
 
 Everything up to the `v1-nextjs` tag was Next.js + Convex, with a local-first
-offline timer. It is not the basis for anything here beyond the design:
+offline timer. After that came a Go + Postgres + WebSocket backend with
+accounts, a global feed and public profiles — removed in favour of this
+offline Mac app (see `docs/adr/0006-offline-mac-app.md`):
 
 ```bash
 git show v1-nextjs:components/timer-app.tsx

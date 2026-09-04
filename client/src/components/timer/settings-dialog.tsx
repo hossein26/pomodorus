@@ -11,7 +11,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { messageFor } from "@/lib/api";
+import { messageFor } from "@/lib/errors";
 import { copy, t } from "@/lib/copy";
 import { faDigits } from "@/lib/format";
 import { shown, step, type IntervalKey, type Intervals } from "@/lib/intervals";

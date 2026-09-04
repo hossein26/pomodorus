@@ -43,6 +43,30 @@ export const BANDS = {
 
 export type IntervalKey = keyof typeof BANDS;
 
+/**
+ * Whether a whole intervals value is one the steppers could have produced:
+ * inside every band and on its step. Checked before saving for the same reason
+ * a work length is — storage is editable, and these numbers decide how long
+ * rest lasts.
+ */
+export function validIntervals(next: Intervals): boolean {
+  const short = next.shortBreakMs / MINUTE;
+  const long = next.longBreakMs / MINUTE;
+  const { perCycle } = next;
+  return (
+    Number.isInteger(short) &&
+    short >= BANDS.shortBreakMs.min &&
+    short <= BANDS.shortBreakMs.max &&
+    Number.isInteger(long) &&
+    (long - BANDS.longBreakMs.min) % BANDS.longBreakMs.step === 0 &&
+    long >= BANDS.longBreakMs.min &&
+    long <= BANDS.longBreakMs.max &&
+    Number.isInteger(perCycle) &&
+    perCycle >= BANDS.perCycle.min &&
+    perCycle <= BANDS.perCycle.max
+  );
+}
+
 /** Whether a field is measured in minutes rather than counted. */
 const isDuration = (key: IntervalKey) => key !== "perCycle";
 

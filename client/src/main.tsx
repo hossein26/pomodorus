@@ -1,24 +1,24 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter } from "react-router";
+import { BrowserRouter, HashRouter } from "react-router";
 
 import "./globals.css";
 import { App } from "./App";
-import { registerWorker } from "./lib/push";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root is missing from index.html");
 
-// The service worker, which caches nothing and exists only so a push can be
-// received with no tab open. Registered here rather than on the first start
-// because it asks the user nothing — the permission, which does, is asked for
-// from the gesture that starts a session.
-void registerWorker();
+// The Mac shell loads the app from a file:// URL, where there is no server to
+// fall back to index.html on a deep link or a reload — so there the route
+// lives after the hash, which never leaves the page. On the web the paths
+// stay clean.
+const Router =
+  typeof window !== "undefined" && "electron" in window ? HashRouter : BrowserRouter;
 
 createRoot(root).render(
   <StrictMode>
-    <BrowserRouter>
+    <Router>
       <App />
-    </BrowserRouter>
+    </Router>
   </StrictMode>,
 );

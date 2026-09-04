@@ -3,9 +3,9 @@ import { useEffect, useRef } from "react";
 import { copy } from "@/lib/copy";
 import { faClock, faElapsed } from "@/lib/format";
 import { useTick } from "@/lib/server-clock";
-import { pushHandlesTheBell } from "@/lib/push";
 import { isRinging, useSession } from "@/lib/session";
 import { startAlarm, stopAlarm, unlockAudio } from "@/lib/sound";
+import { inElectron } from "@/lib/tray";
 
 /**
  * The ringing alarm and the tab title, mounted once above the router.
@@ -54,7 +54,6 @@ export function Alarm() {
   // notification-shaped version of nagging — it stays on screen until dismissed
   // instead of fading after a few seconds. Clicking it does not confirm:
   // only a deliberate tap in the app ends a ring.
-  //
   // Which ring has already been announced. A ref rather than the effect's own
   // deps: React remounts effects in StrictMode, and a second notification for
   // one bell is exactly what "exactly one per ring" rules out.
@@ -62,19 +61,12 @@ export function Alarm() {
 
   useEffect(() => {
     if (id === null || announced.current === id) return;
-    if (!("Notification" in window) || Notification.permission !== "granted") {
-      return;
-    }
-    // The other carrier of this same bell is the service worker, and the rule
-    // the two of them share is this tab's visibility: the worker stands down
-    // while a tab is on screen, so this stands down while it is not. Otherwise
-    // a backgrounded tab and the worker both announce it — and they cannot be
-    // relied on to collapse into one, because a page notification and a
-    // worker's are different objects to the platform whatever their tags say.
-    //
-    // Only when the worker is actually subscribed. A device that is not gets
-    // its notification from here, hidden or not, exactly as before push.
-    if (pushHandlesTheBell() && document.visibilityState !== "visible") return;
+    // Inside the Mac shell notifications just work; on the web the permission
+    // has to have been granted, which starting a session asks for.
+    const granted =
+      inElectron() ||
+      ("Notification" in window && Notification.permission === "granted");
+    if (!granted) return;
     announced.current = id;
     const work = kind === "work";
     new Notification(
@@ -83,14 +75,14 @@ export function Alarm() {
         body: work
           ? copy.notifications.workDoneBody
           : copy.notifications.breakDoneBody,
-        // The same tag the service worker uses in sw.ts, so that in any case
-        // the two are not both on screen the platform still collapses them.
+        // One tag for every ring, so a second window's notification collapses
+        // into this one rather than stacking beside it.
         tag: "pomodorus",
         requireInteraction: true,
       },
     );
-    // Deliberately keyed by the ring alone: a re-render, a reconnect or a
-    // clock correction must not fire a second one.
+    // Deliberately keyed by the ring alone: a re-render or a tick must not
+    // fire a second one.
   }, [id, kind]);
 
   // Live countdown in the tab title, and ring time once the bell has gone — a

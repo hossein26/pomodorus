@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { messageFor } from "@/lib/api";
+import { messageFor } from "@/lib/errors";
 import type { Category } from "@/lib/categories";
 import { copy, t } from "@/lib/copy";
 

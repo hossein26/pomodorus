@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { copy } from "@/lib/copy";
 import { faDate, faDuration, faHourClock } from "@/lib/format";
 import { BANNERS, bannerAssignment } from "@/lib/banners";
-import type { ChartDay, DayTask } from "@/lib/profile";
+import type { ChartDay, DayTask } from "@/lib/stats";
 
 /**
  * One day's detail: the total set as a clock beside that day's picture, then

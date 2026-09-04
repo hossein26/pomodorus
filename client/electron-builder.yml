@@ -1,0 +1,31 @@
+# The Mac artifact: a signed-when-possible .app in a .dmg, built from the
+# offline web build plus the shell. No server, no network at runtime.
+appId: app.pomodorus
+productName: Pomodorus
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - electron/*.cjs
+  - package.json
+# The tray widget reads its image at runtime, so the source icon ships beside
+# the app rather than inside the bundle.
+extraResources:
+  - from: public/
+    to: assets/
+    filter:
+      - icon-192.png
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.icns
+  target:
+    - dmg
+    - zip
+  # Unsigned local build. Signing (CSC_LINK/CSC_KEY_PASSWORD) and notarizing
+  # (APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID) attach at release
+  # time, where hardenedRuntime goes back on with its entitlements.
+dmg:
+  window:
+    width: 540
+    height: 380

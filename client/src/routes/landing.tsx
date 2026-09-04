@@ -1,22 +1,18 @@
 import { Link } from "react-router";
 
-import { Feed } from "@/components/feed";
 import { GithubMark } from "@/components/github-mark";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useAuth } from "@/lib/auth";
 import { copy } from "@/lib/copy";
 
 /** Where the source lives, and the only outbound link on the page. */
 const REPOSITORY = "https://github.com/yazdanctx/pomodorus";
 
 /**
- * The public front door: the hero, the pitch, the way in, the personal note,
- * and the live feed.
+ * The front door: the hero, the pitch, the way in, and the personal note.
  *
- * Nothing on it is behind auth. Most of the people who reach it have no account
- * and may never make one, and the feed is the whole argument for making one —
- * it is what says other people are here and working right now.
+ * Nothing on it is behind anything. There is no account to make and no login
+ * — the timer is one tap away, and everything the app knows lives on this
+ * device.
  */
 export function LandingRoute() {
   return (
@@ -38,8 +34,6 @@ export function LandingRoute() {
         <p className="text-xs leading-7 text-muted-foreground sm:text-sm sm:leading-8">
           {copy.landing.sub}
         </p>
-
-        <Feed />
       </div>
     </main>
   );
@@ -58,7 +52,7 @@ function Hero() {
   return (
     <div className="relative mt-5 aspect-video w-full shrink-0 overflow-hidden">
       <img
-        src="/main.avif"
+        src={`${import.meta.env.BASE_URL}main.avif`}
         alt=""
         // Decorative: the wordmark over it is the heading, and a screen reader
         // reading a description of the artwork here would only be in the way.
@@ -87,27 +81,15 @@ function Hero() {
 /**
  * The way in, beside the way to the source.
  *
- * Both buttons are the same fixed box, and the first one holds that box as a
- * skeleton while auth resolves. Reserving is not guessing: the placeholder
- * never predicts which label wins, so the shift is removed without swapping
- * «لاگین کن» for «تایمر بزن» in front of somebody who was already reading it.
+ * Both buttons are the same fixed box — the layout is settled before anything
+ * has to be decided, so nothing shifts under whoever is reading it.
  */
 function Way() {
-  const auth = useAuth();
-
   return (
     <div className="flex flex-wrap items-center justify-center gap-3">
-      {auth.status === "loading" ? (
-        <Skeleton className="h-11 w-40" />
-      ) : auth.status === "authenticated" ? (
-        <Button asChild size="lg" className="w-40">
-          <Link to="/app">{copy.landing.goWork}</Link>
-        </Button>
-      ) : (
-        <Button asChild size="lg" className="w-40">
-          <Link to="/login">{copy.landing.enter}</Link>
-        </Button>
-      )}
+      <Button asChild size="lg" className="w-40">
+        <Link to="/app">{copy.landing.goWork}</Link>
+      </Button>
 
       <Button asChild size="lg" variant="outline" className="w-40">
         <a href={REPOSITORY} target="_blank" rel="noreferrer noopener">

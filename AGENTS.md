@@ -1,23 +1,26 @@
 # Pomodorus
 
-A minimal Persian-language pomodoro app: a timer, a live global feed of who is
-working right now, and public profiles with a focus-time chart.
+A minimal Persian-language pomodoro app for the Mac: a timer, your own record,
+a menu bar widget, and launch at login.
 
-React client, Go backend, Postgres, WebSockets. **This is a ground-up rewrite**
-— everything before the `v1-nextjs` tag was Next.js + Convex and is gone. Do
-not follow patterns from that tree; it survives only as the design reference.
+Fully offline, no account. Electron shell around a Vite + React + TypeScript +
+Tailwind v4 page; everything the app knows lives in `localStorage`. The design
+reference is still the tree before the `v1-nextjs` tag — do not follow its
+Next.js + Convex patterns — and so is the Go + Postgres backend that came
+after it, which is gone (see `docs/adr/0006-offline-mac-app.md`).
 
 ## Layout
 
 | | |
 | --- | --- |
-| `client/` | Vite + React + TypeScript + Tailwind v4 SPA |
-| `server/` | Go: JSON API, WebSocket hub, and the embedded client |
+| `client/` | The app: the page in `src/`, the Mac shell in `electron/` |
+| `client/src/lib/local-timer.ts` | The pomodoro's rules as pure functions |
+| `client/src/lib/session.tsx` | The live session over `localStorage` |
+| `client/electron/main.cjs` | Window, tray widget, hidden-window watchdog, login item |
+| `client/electron/preload.cjs` | The only bridge: `setTray` out, `setAutoStart` out, nothing back |
 | `docs/design-tokens.md` | The exact design values. Read before writing UI. |
 | `docs/reference/` | Screenshots of v1 — the pixel target. |
 | `docs/adr/` | Why the architecture is the way it is. |
-| `docs/deploy-liara.md` | How it is deployed on Liara, and what must not change. |
-| `deploy/` | The compose stack, Caddyfile and backup script for a self-hosted deploy. |
 | `docs/agents/` | How the engineering skills read this repo. |
 
 ## Agent skills
@@ -39,15 +42,16 @@ Single-context: one `CONTEXT.md` at the repo root plus `docs/adr/`. See
 
 ## Running it
 
-`make up` starts Postgres (**:5433**) and Mailpit (**:1025** SMTP, inbox at
-**http://localhost:8025**). `make dev` runs the Go API (**:8081**) and Vite
-(**:5174**) together. The ports avoid the obvious ones because this machine
-already runs a native Postgres on 5432 and something else on 8080 and 5173.
+`make dev` runs Vite on **:5174** (5173 is taken on this machine).
+`make electron` runs the Mac shell against that dev server — one terminal
+each. `make dist` builds `Pomodorus-*-arm64.dmg` into `client/release/`.
+`make test` runs Vitest.
 
-`make build` builds the client into the binary. `make psql` opens a database
-shell. `make vapid` prints the keypair Web Push needs — without one in the
-environment push is off, which is the normal state locally and a refused boot
-in production.
+The Electron binary downloads into `node_modules` at install time; if the
+postinstall did not run (npm's install-scripts policy), `node
+node_modules/electron/install.js` fetches it, or drop the official
+darwin-arm64 zip into `node_modules/electron/dist/` with `path.txt`
+containing `Electron.app/Contents/MacOS/Electron`.
 
 ## Rules that are not obvious
 
@@ -57,71 +61,54 @@ everywhere, no shadows, monochrome — errors are white/boxed/iconned rather tha
 red, and the *only* hue in the entire app is `rose-500` on a ringing timer
 (plus `yellow-600`, which belongs to the wordmark alone).
 
-**The server owns the timer.** A session is a stored fact — `started_at`,
-`duration_ms`, `confirmed_at` — never a ticking clock. State is *derived* from
-those columns plus `now()`: before `ends_at` it is running, after it and
-unconfirmed it is ringing. There is no scheduler, no cron, and no job that
-flips rows. Do not add one. The only exception is a best-effort in-memory timer
-whose sole job is firing a Web Push notification; it owns no state, and losing
-it costs a notification, never correctness.
+**The device owns the timer.** A session is a stored fact in `localStorage` —
+never a ticking clock. State is *derived* from those facts plus `now()`:
+before `endsAt` it is running, after it and unconfirmed it is ringing. There
+is no scheduler, no cron, and no job that flips anything. Do not add one. The
+only exception is the main-process watchdog, whose sole job is ringing while
+the window is hidden; it owns no state, and losing it costs a notification,
+never correctness. The domain rules live in pure functions in
+`client/src/lib/local-timer.ts`, ported from the old server and tested without
+a window.
 
-**Clocks.** Every timestamp crossing the wire is absolute epoch milliseconds,
-never "seconds remaining". Every response carries the server's `now` so the
-client can correct for skew: the device clock is trusted to measure elapsed
-time and never to say what time it is.
+**Clocks.** Every stored instant is absolute epoch milliseconds, never
+"seconds remaining". The device clock is trusted to measure elapsed time and
+never to say what time it is: `lib/server-clock.ts` keeps a monotonic anchor.
+`noteServerTime` is now only the tests' seam for pinning the clock.
 
-**Mutations are HTTP, pushes are WebSocket.** Every write is an ordinary
-idempotent POST carrying a client-minted id. The socket only pushes facts. Do
-not build RPC over the socket.
-
-**One live session per user**, enforced by a partial unique index. Starting
-when one is already live returns the existing session rather than erroring.
+**One live session**, held in storage. Starting when one is already live
+returns the existing session rather than erroring.
 
 **Nothing advances on its own.** A session that reaches its end rings until an
 explicit tap. Work is credited at its exact nominal end regardless of when it
 is confirmed, and the break is anchored at that end — so ring time is eaten out
 of the break, and a long enough ring leaves none.
 
-**`FAST_SESSIONS` is server-side only.** A client that could request a fast
-session could mint focus time from nothing. It is refused outright in
-production.
+**The shell never decides.** The page owns every fact; the shell renders the
+tray title, bounces the dock, and registers the login item. Ending a ring
+stays the page's deliberate tap — the watchdog only announces. The bridge
+(`preload.cjs`) carries `setTray` and `setAutoStart` outward and nothing back;
+do not grow RPC over it.
 
-**Forwarded headers are read from the right.** `X-Forwarded-For` and
-`X-Forwarded-Proto` are believed only `TRUSTED_PROXY_HOPS` back from the *last*
-value, never the first. Each proxy appends what it saw, so the left end is
-whatever the caller invented — reading it hands the rate limiter a bucket the
-attacker chose. One hop is a reverse proxy; two is a CDN in front of it.
+**Closing parks, quitting quits.** Closing the window hides it into the menu
+bar, where the countdown lives on in the tray title. Only the tray menu's
+Quit — or ⌘Q — ends the process.
 
-**The tight limit is per account, the loose one is per address.** Iranian
-mobile networks put thousands of people behind one CGNAT address, so a per-IP
-limit tight enough to matter breaks the app for a whole network. Writes are
-limited per user — which is also where the cost is, since a write fans out to
-every socket — and the per-address limit is a deliberately loose backstop for
-the two public reads. Do not tighten the second one to fix a problem that
-belongs to the first. The socket ceiling is global for the same reason.
+**There is no server.** No fetch, no WebSocket, no accounts, no feed, no
+profiles, no push infrastructure, no service worker. Do not add a network call
+the timer depends on. The one outbound link (GitHub, on the landing page)
+opens in the real browser via `setWindowOpenHandler`.
 
-**The push endpoint is a URL a client chose.** The server later posts to it, so
-it is checked at dial time against the resolved address, not at subscribe time
-against the string — that gap is DNS rebinding. Subscriptions are also capped
-per account, by trimming the least recently seen: without a ceiling one account
-turns each bell into unbounded outbound requests at a target of its choosing.
-
-**Offline is out of scope.** v1 was local-first; this is not. Do not add local
-queues, replay, or conflict resolution. There *is* a service worker, and it
-exists solely to receive a push — it caches nothing, and must not start.
+**Offline is the whole scope.** History is capped (`HISTORY_CAP`) because the
+device holds it all. There are no queues, no replay, no conflict resolution —
+there is nobody to send to.
 
 ## Style
 
-Go: standard library first (`net/http` with method patterns, `log/slog`),
-`sqlc` + `pgx` for queries, `goose` migrations embedded and run at boot.
-Domain logic goes in pure packages with the clock injected, so it is testable
-without a database. Integration tests use a real Postgres, never a mock.
+TypeScript + React: small components, Persian copy only via `copy.json`,
+`serverNow()`-derived state rather than stored booleans. Tests seed
+`localStorage` and assert what is on screen — the seam is storage, never a
+component's internals.
 
 Copy is Persian and lives in `client/src/copy.json` — extremely casual
 Gen-Z register, including error messages. Repo docs stay formal.
-
-The one exception is the link-preview text in `server/internal/web/meta.go`:
-it is markup for crawlers rather than words on a screen, no reader of the app
-ever sees it, and the alternative is the server reading the client's bundle at
-request time. Nothing else in Go carries Persian — an API error is a code, and
-the sentence for it lives in `copy.json`.

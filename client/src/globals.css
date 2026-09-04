@@ -14,70 +14,70 @@
 
 @font-face {
   font-family: "Peyda";
-  src: url("/fonts/PeydaFaNumWeb-Thin.woff2") format("woff2");
+  src: url("./assets/fonts/PeydaFaNumWeb-Thin.woff2") format("woff2");
   font-weight: 100;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Peyda";
-  src: url("/fonts/PeydaFaNumWeb-ExtraLight.woff2") format("woff2");
+  src: url("./assets/fonts/PeydaFaNumWeb-ExtraLight.woff2") format("woff2");
   font-weight: 200;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Peyda";
-  src: url("/fonts/PeydaFaNumWeb-Light.woff2") format("woff2");
+  src: url("./assets/fonts/PeydaFaNumWeb-Light.woff2") format("woff2");
   font-weight: 300;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Peyda";
-  src: url("/fonts/PeydaFaNumWeb-Regular.woff2") format("woff2");
+  src: url("./assets/fonts/PeydaFaNumWeb-Regular.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Peyda";
-  src: url("/fonts/PeydaFaNumWeb-Medium.woff2") format("woff2");
+  src: url("./assets/fonts/PeydaFaNumWeb-Medium.woff2") format("woff2");
   font-weight: 500;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Peyda";
-  src: url("/fonts/PeydaFaNumWeb-SemiBold.woff2") format("woff2");
+  src: url("./assets/fonts/PeydaFaNumWeb-SemiBold.woff2") format("woff2");
   font-weight: 600;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Peyda";
-  src: url("/fonts/PeydaFaNumWeb-Bold.woff2") format("woff2");
+  src: url("./assets/fonts/PeydaFaNumWeb-Bold.woff2") format("woff2");
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Peyda";
-  src: url("/fonts/PeydaFaNumWeb-ExtraBold.woff2") format("woff2");
+  src: url("./assets/fonts/PeydaFaNumWeb-ExtraBold.woff2") format("woff2");
   font-weight: 800;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Peyda";
-  src: url("/fonts/PeydaFaNumWeb-Black.woff2") format("woff2");
+  src: url("./assets/fonts/PeydaFaNumWeb-Black.woff2") format("woff2");
   font-weight: 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Peyda";
-  src: url("/fonts/PeydaFaNumWeb-ExtraBlack.woff2") format("woff2");
+  src: url("./assets/fonts/PeydaFaNumWeb-ExtraBlack.woff2") format("woff2");
   font-weight: 950;
   font-style: normal;
   font-display: swap;

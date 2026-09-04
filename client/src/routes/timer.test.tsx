@@ -1,45 +1,20 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { copy, t } from "@/lib/copy";
 import { faClock, faDigits, faElapsed } from "@/lib/format";
+import { CLASSIC, type Intervals } from "@/lib/intervals";
+import { KEYS } from "@/lib/local-store";
+import type { HistoryEntry } from "@/lib/local-timer";
 import { noteServerTime } from "@/lib/server-clock";
+import type { Category } from "@/lib/categories";
+import type { Session } from "@/lib/session";
 import { TimerRoute } from "@/routes/timer";
-import { renderAt, SIGNED_IN } from "@/test/render";
-
-/** The timer only exists for somebody signed in, so every test starts there. */
-const renderTimer = () => renderAt(<TimerRoute />, { auth: SIGNED_IN });
+import { renderAt } from "@/test/render";
 
 const NOW = 1_800_000_000_000;
-const CATEGORY = { id: "c1", name: "درس", isPublic: true };
-
-type Session = {
-  id: string;
-  kind: string;
-  categoryId: string | null;
-  categoryName: string | null;
-  startedAt: number;
-  endsAt: number;
-  durationMs: number;
-  breakEndsAt: number | null;
-  resumeCategoryId: string | null;
-  resumeDurationMs: number | null;
-};
-
-type Cycle = { count: number };
-/** What a break is worth on this account, and how long a cycle is. */
-type Intervals = { shortBreakMs: number; longBreakMs: number; perCycle: number };
-/** How the Tehran day has gone so far, credited at the bell. */
-type Today = { count: number; totalMs: number };
-
-const EMPTY_DAY: Today = { count: 0, totalMs: 0 };
-
-const CLASSIC: Intervals = {
-  shortBreakMs: 5 * 60_000,
-  longBreakMs: 20 * 60_000,
-  perCycle: 4,
-};
+const CATEGORY: Category = { id: "c1", name: "درس", isPublic: true };
 
 const SHORT_BREAK = 5 * 60_000;
 
@@ -57,15 +32,16 @@ const workSession = (over: Partial<Session> = {}): Session => {
     breakEndsAt: endsAt + SHORT_BREAK,
     resumeCategoryId: null,
     resumeDurationMs: null,
+    breakSnapshot: { shortMs: SHORT_BREAK, longMs: 20 * 60_000 },
     ...over,
     endsAt,
   };
 };
 
 /**
- * The break a pomodoro handed over, as the server sends it: it *began* at that
- * pomodoro's nominal end, which is why a break started after a two-minute ring
- * has two minutes already gone.
+ * The break a pomodoro handed over: it *began* at that pomodoro's nominal
+ * end, which is why a break started after a two-minute ring has two minutes
+ * already gone.
  */
 const breakSession = (over: Partial<Session> = {}): Session => ({
   id: "b1",
@@ -79,101 +55,54 @@ const breakSession = (over: Partial<Session> = {}): Session => ({
   // What "another one" resumes, read off the pomodoro this break followed.
   resumeCategoryId: CATEGORY.id,
   resumeDurationMs: 25 * 60_000,
+  breakSnapshot: null,
   ...over,
 });
 
+/** A finished pomodoro, as the history keeps it. */
+const doneWork = (endsAt: number): HistoryEntry => ({
+  kind: "work",
+  startedAt: endsAt - 25 * 60_000,
+  endsAt,
+  durationMs: 25 * 60_000,
+  cancelledAt: null,
+  categoryId: CATEGORY.id,
+  categoryName: CATEGORY.name,
+});
+
 /**
- * The seam is `fetch`. The route is fed server payloads and the assertion is
- * what is on screen — the same shape a real browser would be in.
+ * The seam is storage. The route is fed stored facts and the assertion is
+ * what is on screen — the same shape a real window would be in.
  */
-function server({
-  session = null as Session | null,
-  cycle = { count: 0 } as Cycle,
-  intervals = CLASSIC,
-  today = EMPTY_DAY,
+function seed({
   categories = [CATEGORY],
-  onStart,
-  onCancel,
-  onConfirm,
-  onIntervals,
+  live = null as Session | null,
+  history = [] as HistoryEntry[],
+  intervals = CLASSIC,
 }: {
-  session?: Session | null;
-  cycle?: Cycle;
+  categories?: Category[];
+  live?: Session | null;
+  history?: HistoryEntry[];
   intervals?: Intervals;
-  today?: Today;
-  categories?: typeof CATEGORY[];
-  onStart?: (body: Record<string, unknown>) => Response;
-  onCancel?: () => Response;
-  onConfirm?: () => Response;
-  // A promise rather than a plain Response where a test wants to hold the
-  // request open and see the row while it is in flight.
-  onIntervals?: (body: Record<string, unknown>) => Response | Promise<Response>;
 } = {}) {
-  const started = vi.fn();
-  const cancelled = vi.fn();
-  const confirmed = vi.fn();
-  const saved = vi.fn();
-
-  const fetched = vi.fn(async (input: string, init?: RequestInit) => {
-    const body: Record<string, unknown> =
-      typeof init?.body === "string"
-        ? (JSON.parse(init.body) as Record<string, unknown>)
-        : {};
-
-    if (input === "/api/categories") {
-      return json({ categories, serverNow: NOW });
-    }
-    if (input === "/api/session") {
-      return timer({ session });
-    }
-    if (input === "/api/session/start") {
-      started(body);
-      return onStart ? onStart(body) : timer({ session: workSession() });
-    }
-    if (input.endsWith("/cancel")) {
-      cancelled();
-      return onCancel ? onCancel() : timer({ session: null });
-    }
-    if (input.endsWith("/confirm")) {
-      confirmed();
-      return onConfirm ? onConfirm() : timer({ session: null });
-    }
-    // The intervals are edited with an ordinary POST and answered with the
-    // whole timer state, exactly like every other mutation.
-    if (input === "/api/intervals") {
-      saved(body);
-      return onIntervals
-        ? onIntervals(body)
-        : json({ session, cycle, intervals: body, today, serverNow: NOW });
-    }
-    throw new Error(`unstubbed request: ${input}`);
-  });
-
-  // Every answer about the timer carries the session, the cycle, the account's
-  // intervals and today's total together, exactly as the server sends them.
-  const timer = ({ session }: { session: Session | null }) =>
-    json({ session, cycle, intervals, today, serverNow: NOW });
-
-  vi.stubGlobal("fetch", fetched);
-  return { started, cancelled, confirmed, saved };
+  localStorage.setItem(KEYS.categories, JSON.stringify(categories));
+  localStorage.setItem(KEYS.live, JSON.stringify(live));
+  localStorage.setItem(KEYS.history, JSON.stringify(history));
+  localStorage.setItem(KEYS.intervals, JSON.stringify(intervals));
 }
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+function storedLive(): Session | null {
+  const raw = localStorage.getItem(KEYS.live);
+  return raw ? (JSON.parse(raw) as Session | null) : null;
+}
 
-/** A whole timer payload, for the handlers a test overrides itself. */
-const timerJson = (
-  session: Session | null,
-  cycle: Cycle = { count: 0 },
-  intervals: Intervals = CLASSIC,
-  today: Today = EMPTY_DAY,
-) => json({ session, cycle, intervals, today, serverNow: NOW });
+function storedIntervals(): Intervals {
+  return JSON.parse(localStorage.getItem(KEYS.intervals) ?? "null") as Intervals;
+}
+
+const renderTimer = () => renderAt(<TimerRoute />);
 
 beforeEach(() => {
-  vi.unstubAllGlobals();
   // Anchor the clock where the fixtures are, so a countdown is a statement
   // about a fixed instant rather than about when the suite happened to run.
   noteServerTime(NOW, performance.now());
@@ -187,7 +116,7 @@ async function pickTask(user: ReturnType<typeof userEvent.setup>) {
 
 describe("the start screen", () => {
   it("offers the stepper at its default and the picked task", async () => {
-    server();
+    seed();
     renderTimer();
 
     expect(await screen.findByText(faClock(25 * 60_000))).toBeTruthy();
@@ -197,7 +126,7 @@ describe("the start screen", () => {
   });
 
   it("cannot start without a task", async () => {
-    server({ categories: [] });
+    seed({ categories: [] });
     renderTimer();
 
     const button = await screen.findByRole("button", { name: copy.timer.start });
@@ -205,11 +134,10 @@ describe("the start screen", () => {
   });
 
   it("cannot start on a task that has been deleted since it was picked", async () => {
-    // The remembered id is a device preference and the list is the truth; a
-    // stale one has to fall back rather than be sent to a server that would
-    // refuse it.
+    // The remembered id is a preference and the list is the truth; a stale
+    // one has to fall back rather than be started on.
     localStorage.setItem("pomodorus.category", JSON.stringify("gone"));
-    server();
+    seed();
     renderTimer();
 
     const button = await screen.findByRole("button", { name: copy.timer.start });
@@ -217,7 +145,7 @@ describe("the start screen", () => {
   });
 
   it("walks the range in five-minute steps", async () => {
-    server();
+    seed();
     renderTimer();
     const user = userEvent.setup();
 
@@ -230,7 +158,7 @@ describe("the start screen", () => {
   });
 
   it("disables the button for a limit it has reached", async () => {
-    server();
+    seed();
     renderTimer();
     const user = userEvent.setup();
     await screen.findByText(faClock(25 * 60_000));
@@ -246,7 +174,7 @@ describe("the start screen", () => {
   });
 
   it("starts with the task and the length that are on screen", async () => {
-    const { started } = server();
+    seed();
     renderTimer();
     const user = userEvent.setup();
 
@@ -254,16 +182,19 @@ describe("the start screen", () => {
     await user.click(screen.getByRole("button", { name: /۳۰/ }));
     await user.click(screen.getByRole("button", { name: copy.timer.start }));
 
-    await waitFor(() => expect(started).toHaveBeenCalled());
-    const body = started.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(body.categoryId).toBe(CATEGORY.id);
-    expect(body.durationMs).toBe(30 * 60_000);
-    // A client-minted id, so a retry cannot start a second timer.
-    expect(typeof body.id).toBe("string");
+    // The live fact, stored: the task, the length, and an end thirty minutes
+    // out. A retry cannot start a second timer — starting while one is live
+    // answers with the live one.
+    await waitFor(() => expect(storedLive()).not.toBeNull());
+    const live = storedLive();
+    expect(live?.categoryId).toBe(CATEGORY.id);
+    expect(live?.durationMs).toBe(30 * 60_000);
+    expect(typeof live?.id).toBe("string");
+    expect(await screen.findByText(faClock(30 * 60_000))).toBeTruthy();
   });
 
   it("remembers the task and the length across a reload", async () => {
-    server();
+    seed();
     const first = renderTimer();
     const user = userEvent.setup();
 
@@ -280,22 +211,11 @@ describe("the start screen", () => {
       ),
     ).toBeNull();
   });
-
-  it("says why a start was refused rather than doing nothing", async () => {
-    server({ onStart: () => json({ error: "bad_duration", serverNow: NOW }, 400) });
-    renderTimer();
-    const user = userEvent.setup();
-
-    await pickTask(user);
-    await user.click(screen.getByRole("button", { name: copy.timer.start }));
-
-    expect(await screen.findByText(copy.errors.badDuration)).toBeTruthy();
-  });
 });
 
 describe("a running session", () => {
   it("shows the task, the countdown and a cancel", async () => {
-    server({ session: workSession() });
+    seed({ live: workSession() });
     renderTimer();
 
     expect(await screen.findByText("درس")).toBeTruthy();
@@ -309,11 +229,11 @@ describe("a running session", () => {
   });
 
   it("counts down from the session's own facts, not from anything streamed", async () => {
-    // A session that began five minutes ago. Nothing was pushed to say how far
+    // A session that began five minutes ago. Nothing arrives to say how far
     // in it is — the countdown is computed from startedAt, endsAt and the
-    // clock, which is what makes a dropped connection invisible.
-    server({
-      session: workSession({
+    // clock.
+    seed({
+      live: workSession({
         startedAt: NOW - 5 * 60_000,
         endsAt: NOW + 20 * 60_000,
       }),
@@ -323,15 +243,15 @@ describe("a running session", () => {
     expect(await screen.findByText(faClock(20 * 60_000))).toBeTruthy();
   });
 
-  it("shows a generic label for a task whose name is not ours to render", async () => {
-    server({ session: workSession({ categoryName: null }) });
+  it("shows a generic label for a task with no name", async () => {
+    seed({ live: workSession({ categoryName: null }) });
     renderTimer();
 
     expect(await screen.findByText(copy.timer.privateTask)).toBeTruthy();
   });
 
   it("cancels, and returns to the start screen", async () => {
-    const { cancelled } = server({ session: workSession() });
+    seed({ live: workSession() });
     renderTimer();
     const user = userEvent.setup();
 
@@ -339,31 +259,16 @@ describe("a running session", () => {
       await screen.findByRole("button", { name: copy.timer.cancelWork }),
     );
 
-    await waitFor(() => expect(cancelled).toHaveBeenCalled());
+    await waitFor(() => expect(storedLive()).toBeNull());
     expect(
       await screen.findByRole("button", { name: copy.timer.start }),
     ).toBeTruthy();
-  });
-
-  it("says why a cancel was refused", async () => {
-    server({
-      session: workSession(),
-      onCancel: () => json({ error: "not_cancellable", serverNow: NOW }, 409),
-    });
-    renderTimer();
-    const user = userEvent.setup();
-
-    await user.click(
-      await screen.findByRole("button", { name: copy.timer.cancelWork }),
-    );
-
-    expect(await screen.findByText(copy.errors.notCancellable)).toBeTruthy();
   });
 });
 
 describe("the progress bar", () => {
   it("starts at zero for a new session", async () => {
-    server({ session: workSession() });
+    seed({ live: workSession() });
     renderTimer();
 
     const bar = await screen.findByRole("progressbar");
@@ -374,8 +279,8 @@ describe("the progress bar", () => {
     // A negative percentage is invalid CSS: the declaration would be dropped,
     // width would fall back to auto, and the bar would flash full white at
     // exactly the moment a session ends.
-    server({
-      session: workSession({ startedAt: NOW - 25 * 60_000, endsAt: NOW + 1 }),
+    seed({
+      live: workSession({ startedAt: NOW - 25 * 60_000, endsAt: NOW + 1 }),
     });
     renderTimer();
 
@@ -386,8 +291,8 @@ describe("the progress bar", () => {
   });
 
   it("clamps rather than going negative before a session starts", async () => {
-    server({
-      session: workSession({ startedAt: NOW + 60_000, endsAt: NOW + 26 * 60_000 }),
+    seed({
+      live: workSession({ startedAt: NOW + 60_000, endsAt: NOW + 26 * 60_000 }),
     });
     renderTimer();
 
@@ -402,7 +307,7 @@ describe("the bell", () => {
     workSession({ startedAt: NOW - 25 * 60_000 - ago, endsAt: NOW - ago });
 
   it("rings where the countdown was, counting up", async () => {
-    server({ session: ringing(65_000) });
+    seed({ live: ringing(65_000) });
     renderTimer();
 
     expect(await screen.findByText(copy.timer.ringWorkTitle)).toBeTruthy();
@@ -413,7 +318,7 @@ describe("the bell", () => {
   });
 
   it("is the only red in the app", async () => {
-    server({ session: ringing(1000) });
+    seed({ live: ringing(1000) });
     renderTimer();
 
     const clock = await screen.findByText(faElapsed(1000));
@@ -421,7 +326,7 @@ describe("the bell", () => {
   });
 
   it("cannot be cancelled: the work is complete and already credited", async () => {
-    server({ session: ringing(1000) });
+    seed({ live: ringing(1000) });
     renderTimer();
 
     await screen.findByText(copy.timer.ringWorkTitle);
@@ -432,11 +337,7 @@ describe("the bell", () => {
   });
 
   it("ends on a deliberate tap, and hands over the break in the same one", async () => {
-    const rest = breakSession({ startedAt: NOW - 1000, endsAt: NOW - 1000 + SHORT_BREAK });
-    const { confirmed } = server({
-      session: ringing(1000),
-      onConfirm: () => timerJson(rest),
-    });
+    seed({ live: ringing(1000) });
     renderTimer();
     const user = userEvent.setup();
 
@@ -444,35 +345,20 @@ describe("the bell", () => {
       await screen.findByRole("button", { name: copy.timer.confirmWork }),
     );
 
-    await waitFor(() => expect(confirmed).toHaveBeenCalled());
     // One tap: the pomodoro is acknowledged and the rest it earned is running.
     expect(
       await screen.findByRole("button", { name: copy.timer.skipBreak }),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: copy.timer.start })).toBeNull();
+    // Anchored at the bell: the break runs to the deadline the pomodoro fixed.
+    expect(storedLive()?.endsAt).toBe(NOW - 1000 + SHORT_BREAK);
   });
 
-  it("keeps ringing when a confirmation is refused, and says why", async () => {
-    server({
-      session: ringing(1000),
-      onConfirm: () => json({ error: "nothing_ringing", serverNow: NOW }, 409),
-    });
-    renderTimer();
-    const user = userEvent.setup();
-
-    await user.click(
-      await screen.findByRole("button", { name: copy.timer.confirmWork }),
-    );
-
-    expect(await screen.findByText(copy.errors.nothingRinging)).toBeTruthy();
-    expect(screen.getByText(copy.timer.ringWorkTitle)).toBeTruthy();
-  });
-
-  it("rings a session that ended while the tab was asleep", async () => {
-    // Nothing was scheduled and nothing was pushed: the state is recomputed
-    // from `endsAt` and the clock, so however long the app was away it opens
-    // into the ring rather than into a finished countdown.
-    server({ session: ringing(3 * 60 * 60_000) });
+  it("rings a session that ended while the window was shut", async () => {
+    // Nothing was scheduled: the state is recomputed from `endsAt` and the
+    // clock, so however long the app was away it opens into the ring rather
+    // than into a finished countdown.
+    seed({ live: ringing(3 * 60 * 60_000) });
     renderTimer();
 
     expect(await screen.findByText(copy.timer.ringWorkTitle)).toBeTruthy();
@@ -486,7 +372,7 @@ describe("the button on a ringing pomodoro", () => {
     workSession({ startedAt: NOW - 25 * 60_000 - ago, endsAt: NOW - ago });
 
   it("promises the chill while there is still some of it left", async () => {
-    server({ session: rang(SHORT_BREAK - 1000) });
+    seed({ live: rang(SHORT_BREAK - 1000) });
     renderTimer();
 
     expect(
@@ -498,7 +384,7 @@ describe("the button on a ringing pomodoro", () => {
     // Anchored at the nominal end: five minutes of ringing is five minutes of
     // break spent, so this tap buys silence and nothing else. The label has to
     // say that a moment *before* it is pressed, not after.
-    server({ session: rang(SHORT_BREAK) });
+    seed({ live: rang(SHORT_BREAK) });
     renderTimer();
 
     expect(
@@ -510,7 +396,7 @@ describe("the button on a ringing pomodoro", () => {
   });
 
   it("drops back to the start screen when nothing survived", async () => {
-    const { confirmed } = server({ session: rang(2 * 60 * 60_000) });
+    seed({ live: rang(2 * 60 * 60_000) });
     renderTimer();
     const user = userEvent.setup();
 
@@ -518,7 +404,7 @@ describe("the button on a ringing pomodoro", () => {
       await screen.findByRole("button", { name: copy.timer.confirmWorkNoBreak }),
     );
 
-    await waitFor(() => expect(confirmed).toHaveBeenCalled());
+    await waitFor(() => expect(storedLive()).toBeNull());
     expect(
       await screen.findByRole("button", { name: copy.timer.start }),
     ).toBeTruthy();
@@ -527,10 +413,10 @@ describe("the button on a ringing pomodoro", () => {
 
 describe("a running break", () => {
   it("counts down what survived the ring, and offers a skip", async () => {
-    // Two minutes of it were spent ringing, so three are left — the client is
+    // Two minutes of it were spent ringing, so three are left — the screen is
     // told nothing about that; it reads one end time like any other.
-    server({
-      session: breakSession({
+    seed({
+      live: breakSession({
         startedAt: NOW - 2 * 60_000,
         endsAt: NOW + 3 * 60_000,
       }),
@@ -550,8 +436,8 @@ describe("a running break", () => {
     // The bar is measured from the break's start, which is the pomodoro's
     // nominal end — so two minutes of ringing are already behind it when it
     // first appears, rather than being quietly forgiven.
-    server({
-      session: breakSession({
+    seed({
+      live: breakSession({
         startedAt: NOW - 2 * 60_000,
         endsAt: NOW + 3 * 60_000,
       }),
@@ -563,14 +449,14 @@ describe("a running break", () => {
   });
 
   it("names the long one as the long one", async () => {
-    server({ session: breakSession({ kind: "longBreak" }) });
+    seed({ live: breakSession({ kind: "longBreak" }) });
     renderTimer();
 
     expect(await screen.findByText(copy.timer.kindLongBreak)).toBeTruthy();
   });
 
   it("skips back to the start screen", async () => {
-    const { cancelled } = server({ session: breakSession() });
+    seed({ live: breakSession() });
     renderTimer();
     const user = userEvent.setup();
 
@@ -578,7 +464,7 @@ describe("a running break", () => {
       await screen.findByRole("button", { name: copy.timer.skipBreak }),
     );
 
-    await waitFor(() => expect(cancelled).toHaveBeenCalled());
+    await waitFor(() => expect(storedLive()).toBeNull());
     expect(
       await screen.findByRole("button", { name: copy.timer.start }),
     ).toBeTruthy();
@@ -590,7 +476,7 @@ describe("a ringing break", () => {
     breakSession({ startedAt: NOW - SHORT_BREAK, endsAt: NOW, ...over });
 
   it("asks the technique's own question: another one, or stop", async () => {
-    server({ session: rang() });
+    seed({ live: rang() });
     renderTimer();
 
     expect(await screen.findByText(copy.timer.ringBreakTitle)).toBeTruthy();
@@ -603,13 +489,11 @@ describe("a ringing break", () => {
   });
 
   it("continues on the same task at the same length", async () => {
-    // Neither comes from this device: the break carries the task and the
-    // length of the pomodoro it followed, so a second device that has picked
-    // nothing continues onto the same work rather than onto its own guess.
+    // Neither comes from these picks: the break carries the task and the
+    // length of the pomodoro it followed, so continuing means the same work
+    // rather than a guess.
     localStorage.setItem("pomodorus.minutes", JSON.stringify(15));
-    const { started, confirmed } = server({
-      session: rang({ resumeDurationMs: 30 * 60_000 }),
-    });
+    seed({ live: rang({ resumeDurationMs: 30 * 60_000 }) });
     renderTimer();
     const user = userEvent.setup();
 
@@ -618,21 +502,18 @@ describe("a ringing break", () => {
     );
 
     // Acknowledged first, then started: one live session at a time.
-    await waitFor(() => expect(started).toHaveBeenCalled());
-    expect(confirmed).toHaveBeenCalled();
-    const body = started.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(body.categoryId).toBe(CATEGORY.id);
-    expect(body.durationMs).toBe(30 * 60_000);
+    await waitFor(() => expect(storedLive()?.kind).toBe("work"));
+    const live = storedLive();
+    expect(live?.categoryId).toBe(CATEGORY.id);
+    expect(live?.durationMs).toBe(30 * 60_000);
     // And the stepper behind it now agrees with what is running.
     expect(JSON.parse(localStorage.getItem("pomodorus.minutes") ?? "0")).toBe(30);
   });
 
-  it("falls back to this device's picks when the break carries none", async () => {
+  it("falls back to these picks when the break carries none", async () => {
     localStorage.setItem("pomodorus.category", JSON.stringify(CATEGORY.id));
     localStorage.setItem("pomodorus.minutes", JSON.stringify(20));
-    const { started } = server({
-      session: rang({ resumeCategoryId: null, resumeDurationMs: null }),
-    });
+    seed({ live: rang({ resumeCategoryId: null, resumeDurationMs: null }) });
     renderTimer();
     const user = userEvent.setup();
 
@@ -640,16 +521,16 @@ describe("a ringing break", () => {
       await screen.findByRole("button", { name: copy.timer.continueWork }),
     );
 
-    await waitFor(() => expect(started).toHaveBeenCalled());
-    const body = started.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(body.categoryId).toBe(CATEGORY.id);
-    expect(body.durationMs).toBe(20 * 60_000);
+    await waitFor(() => expect(storedLive()?.kind).toBe("work"));
+    const live = storedLive();
+    expect(live?.categoryId).toBe(CATEGORY.id);
+    expect(live?.durationMs).toBe(20 * 60_000);
   });
 
   it("cannot continue onto a task that is gone", async () => {
-    // The task the pomodoro was on has since been deleted, and this device has
-    // nothing remembered to fall back to. The list is the truth.
-    server({ session: rang({ resumeCategoryId: "gone" }) });
+    // The task the pomodoro was on has since been deleted, and nothing is
+    // remembered to fall back to. The list is the truth.
+    seed({ live: rang({ resumeCategoryId: "gone" }) });
     renderTimer();
 
     const button = await screen.findByRole("button", {
@@ -658,30 +539,9 @@ describe("a ringing break", () => {
     expect(button.getAttribute("disabled")).not.toBeNull();
   });
 
-  it("says why a continue never became a pomodoro", async () => {
-    // The break was acknowledged, so this screen is already gone by the time
-    // the start fails. The reason has to survive that, or the tap looks like
-    // it did nothing.
-    server({
-      session: rang(),
-      onStart: () => json({ error: "category_not_found", serverNow: NOW }, 404),
-    });
-    renderTimer();
-    const user = userEvent.setup();
-
-    await user.click(
-      await screen.findByRole("button", { name: copy.timer.continueWork }),
-    );
-
-    expect(await screen.findByText(copy.errors.categoryNotFound)).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: copy.timer.start }),
-    ).toBeTruthy();
-  });
-
   it("stops, with both still picked", async () => {
     localStorage.setItem("pomodorus.category", JSON.stringify(CATEGORY.id));
-    const { started, confirmed } = server({ session: rang() });
+    seed({ live: rang() });
     renderTimer();
     const user = userEvent.setup();
 
@@ -689,8 +549,7 @@ describe("a ringing break", () => {
       await screen.findByRole("button", { name: copy.timer.confirmBreak }),
     );
 
-    await waitFor(() => expect(confirmed).toHaveBeenCalled());
-    expect(started).not.toHaveBeenCalled();
+    await waitFor(() => expect(storedLive()).toBeNull());
     // Back where it started, ready to go again on the same task.
     const start = await screen.findByRole("button", { name: copy.timer.start });
     expect(start.getAttribute("disabled")).toBeNull();
@@ -699,7 +558,10 @@ describe("a ringing break", () => {
 
 describe("the cycle dots", () => {
   it("show how far into the cycle a running session is", async () => {
-    server({ session: workSession(), cycle: { count: 2 } });
+    seed({
+      live: workSession(),
+      history: [doneWork(NOW - 55 * 60_000), doneWork(NOW - 30 * 60_000)],
+    });
     renderTimer();
 
     const dots = await screen.findByTitle(
@@ -713,7 +575,10 @@ describe("the cycle dots", () => {
   });
 
   it("clamp rather than grow for somebody who keeps declining the long break", async () => {
-    server({ session: workSession(), cycle: { count: 6 } });
+    seed({
+      live: workSession(),
+      history: [1, 2, 3, 4, 5, 6].map((n) => doneWork(NOW - n * 26 * 60_000)),
+    });
     renderTimer();
 
     const dots = await screen.findByTitle(
@@ -723,7 +588,7 @@ describe("the cycle dots", () => {
   });
 
   it("are not on the start screen, where there is no session to be in one", async () => {
-    server({ cycle: { count: 2 } });
+    seed({ history: [doneWork(NOW - 30 * 60_000), doneWork(NOW - 55 * 60_000)] });
     renderTimer();
 
     await screen.findByRole("button", { name: copy.timer.start });
@@ -744,29 +609,28 @@ describe("the settings dialog", () => {
   const stepper = (label: string, direction: "+" | "−") =>
     screen.getByRole("button", { name: `${label} ${direction}` });
 
-  it("shows the three intervals the account is set to", async () => {
-    server({ intervals: { shortBreakMs: 8 * 60_000, longBreakMs: 30 * 60_000, perCycle: 3 } });
+  it("shows the three intervals this device is set to", async () => {
+    seed({
+      intervals: { shortBreakMs: 8 * 60_000, longBreakMs: 30 * 60_000, perCycle: 3 },
+    });
     renderTimer();
     await openSettings(userEvent.setup());
 
-    // The account's, not this device's: there is nothing in localStorage to
-    // read them from, and two devices may not disagree about them.
     expect(screen.getByText(t(copy.timer.minutes, { m: faDigits(8) }))).toBeTruthy();
     expect(screen.getByText(t(copy.timer.minutes, { m: faDigits(30) }))).toBeTruthy();
     expect(screen.getByText(t(copy.timer.count, { n: faDigits(3) }))).toBeTruthy();
   });
 
-  it("sends all three, with the one that was stepped changed", async () => {
-    const { saved } = server();
+  it("saves all three, with the one that was stepped changed", async () => {
+    seed();
     renderTimer();
     const user = userEvent.setup();
     await openSettings(user);
 
     await user.click(stepper(copy.timer.settingsShortBreak, "+"));
 
-    // All three every time: there is nothing to merge, so a stepper tapped
-    // here cannot quietly revert what another device set a moment ago.
-    expect(saved).toHaveBeenCalledWith({
+    // All three every time: there is nothing to merge.
+    expect(storedIntervals()).toEqual({
       shortBreakMs: 6 * 60_000,
       longBreakMs: 20 * 60_000,
       perCycle: 4,
@@ -777,26 +641,22 @@ describe("the settings dialog", () => {
   });
 
   it("walks each interval in its own step", async () => {
-    const { saved } = server();
+    seed();
     renderTimer();
     const user = userEvent.setup();
     await openSettings(user);
 
     // A minute for the short break, five for the long one, one pomodoro for
-    // the cycle — the bands the server refuses anything outside of.
+    // the cycle.
     await user.click(stepper(copy.timer.settingsLongBreak, "−"));
-    expect(saved).toHaveBeenLastCalledWith(
-      expect.objectContaining({ longBreakMs: 15 * 60_000 }),
-    );
+    expect(storedIntervals()).toMatchObject({ longBreakMs: 15 * 60_000 });
 
     await user.click(stepper(copy.timer.settingsPerCycle, "−"));
-    expect(saved).toHaveBeenLastCalledWith(
-      expect.objectContaining({ perCycle: 3 }),
-    );
+    expect(storedIntervals()).toMatchObject({ perCycle: 3 });
   });
 
   it("disables the button for a limit it has reached", async () => {
-    server({
+    seed({
       intervals: { shortBreakMs: 3 * 60_000, longBreakMs: 35 * 60_000, perCycle: 6 },
     });
     renderTimer();
@@ -810,70 +670,20 @@ describe("the settings dialog", () => {
     expect(stepper(copy.timer.settingsPerCycle, "+").getAttribute("disabled")).not.toBeNull();
   });
 
-  it("reports a refused edit rather than showing a number only this device has", async () => {
-    server({ onIntervals: () => json({ error: "bad_interval", serverNow: NOW }, 400) });
-    renderTimer();
-    const user = userEvent.setup();
-    await openSettings(user);
-
-    await user.click(stepper(copy.timer.settingsShortBreak, "+"));
-
-    expect(await screen.findByText(copy.errors.badDuration)).toBeTruthy();
-    // Still five: the value on screen is the server's answer, and a tap that
-    // never landed did not change what a break is worth.
-    expect(screen.getByText(t(copy.timer.minutes, { m: faDigits(5) }))).toBeTruthy();
-  });
-
-  it("goes inert while an edit is in flight rather than counting off a stale value", async () => {
-    // The number on screen is the server's answer, so a second tap computed
-    // from the one it is about to replace would be a tap silently dropped.
-    let land!: (answer: Response) => void;
-    const held = new Promise<Response>((resolve) => {
-      land = resolve;
+  it("applies when the window looks again, so another window's edit arrives", async () => {
+    seed({
+      intervals: { shortBreakMs: 9 * 60_000, longBreakMs: 20 * 60_000, perCycle: 4 },
     });
-    const { saved } = server({ onIntervals: () => held });
-    renderTimer();
-    const user = userEvent.setup();
-    await openSettings(user);
-
-    await user.click(stepper(copy.timer.settingsShortBreak, "+"));
-    await waitFor(() =>
-      expect(
-        stepper(copy.timer.settingsShortBreak, "+").getAttribute("disabled"),
-      ).not.toBeNull(),
-    );
-
-    await user.click(stepper(copy.timer.settingsShortBreak, "+"));
-    expect(saved).toHaveBeenCalledTimes(1);
-
-    // And live again the moment the answer lands, at the value it carried.
-    land(
-      json({
-        session: null,
-        cycle: { count: 0 },
-        intervals: { ...CLASSIC, shortBreakMs: 6 * 60_000 },
-        serverNow: NOW,
-      }),
-    );
-    expect(
-      await screen.findByText(t(copy.timer.minutes, { m: faDigits(6) })),
-    ).toBeTruthy();
-    expect(
-      stepper(copy.timer.settingsShortBreak, "+").getAttribute("disabled"),
-    ).toBeNull();
-  });
-
-  it("asks again when the tab is looked at, so another device's edit arrives", async () => {
-    // There is no socket yet, so this is what "applies on every device you have
-    // open" rests on: a tab that has been away asks the moment it is back.
-    server({ intervals: { shortBreakMs: 9 * 60_000, longBreakMs: 20 * 60_000, perCycle: 4 } });
     renderTimer();
     const user = userEvent.setup();
     await openSettings(user);
     expect(screen.getByText(t(copy.timer.minutes, { m: faDigits(9) }))).toBeTruthy();
 
-    // The account changes elsewhere; this tab comes back to the front.
-    server({ intervals: { shortBreakMs: 4 * 60_000, longBreakMs: 20 * 60_000, perCycle: 4 } });
+    // The intervals change elsewhere; this window comes back to the front.
+    localStorage.setItem(
+      KEYS.intervals,
+      JSON.stringify({ shortBreakMs: 4 * 60_000, longBreakMs: 20 * 60_000, perCycle: 4 }),
+    );
     document.dispatchEvent(new Event("visibilitychange"));
 
     expect(
@@ -881,10 +691,10 @@ describe("the settings dialog", () => {
     ).toBeTruthy();
   });
 
-  it("takes the cycle it was given straight to the dots", async () => {
+  it("takes the cycle straight to the dots", async () => {
     // Pomodoros-per-cycle is read at completion rather than snapshotted, so a
     // shorter cycle is felt immediately — including by what is on screen.
-    server({ session: workSession(), cycle: { count: 1 } });
+    seed({ live: workSession(), history: [doneWork(NOW - 30 * 60_000)] });
     renderTimer();
 
     expect(
@@ -895,7 +705,7 @@ describe("the settings dialog", () => {
   it("is not offered while something is running", async () => {
     // It is opened from the start screen, where the intervals are a decision
     // about what comes next rather than about what is already under way.
-    server({ session: workSession() });
+    seed({ live: workSession() });
     renderTimer();
 
     await screen.findByText(CATEGORY.name);
@@ -903,25 +713,14 @@ describe("the settings dialog", () => {
   });
 });
 
-describe("opening on a second device", () => {
+describe("opening in a second window", () => {
   it("shows the running timer rather than a start button", async () => {
-    // The server owns the timer, so "a second device" is just another client
-    // asking the same question and getting the same answer.
-    server({ session: workSession() });
+    // Storage owns the timer, so "a second window" is just another reader of
+    // the same facts.
+    seed({ live: workSession() });
     renderTimer();
 
     expect(await screen.findByText(faClock(25 * 60_000))).toBeTruthy();
     expect(screen.queryByRole("button", { name: copy.timer.start })).toBeNull();
   });
-
-  it("reserves the page rather than flashing a start button while it asks", () => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
-    renderTimer();
-
-    expect(screen.queryByRole("button", { name: copy.timer.start })).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: copy.timer.cancelWork }),
-    ).toBeNull();
-  });
 });
-
