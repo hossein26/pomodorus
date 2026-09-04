@@ -50,6 +50,28 @@ export function faElapsed(ms: number): string {
   );
 }
 
+/**
+ * The same two clocks in Latin digits, for the menu bar widget.
+ *
+ * The tray is a strip of system UI beside other apps' numbers — all Latin —
+ * so Persian digits there would read as the odd one out at a glance. The app
+ * itself stays Persian everywhere.
+ */
+export function enClock(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+/** The ring time in Latin digits, e.g. +01:05. */
+export function enElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `+${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 /** Focus time as a sentence: «۲ ساعت و ۲۵ دقیقه» / «۴۵ دقیقه». */
 export function faDuration(ms: number): string {
   const totalMinutes = Math.round(ms / 60_000);

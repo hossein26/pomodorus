@@ -34,9 +34,14 @@ make dist   # Pomodorus-*-arm64.dmg (and .zip) in client/release/
 What the shell owns, and the page does not:
 
 - **Menu bar widget** — the tray title shows the countdown while running and
-  the ring time while ringing (`● +mm:ss`); the menu offers showing the timer,
-  the login-item switch, and quitting. Closing the window parks the app in the
-  menu bar rather than quitting.
+  the ring time while ringing (`● +mm:ss`), in Latin digits beside a template
+  tomato icon. The menu manages the whole timer without opening the window:
+  quick-starting the picked task, cancelling/skipping, confirming a ring,
+  continuing onto the next pomodoro, plus showing the timer, the record, the
+  plus showing the timer, the record, the login-item switch, and quitting. A
+  left-click opens that menu; a right-click is play/pause — it starts the
+  picked timer when nothing is live, stops a running one, and ends a ring.
+  Closing the window parks the app in the menu bar rather than quitting.
 - **The bell while hidden** — a hidden window's timers are throttled, so the
   main process arms its own watchdog on the session's end and rings (dock
   bounce + notification) if the window is still hidden. Ending the ring stays

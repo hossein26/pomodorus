@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  enClock,
   enDigits,
+  enElapsed,
   faClock,
   faDate,
   faDateShort,
@@ -62,8 +64,21 @@ describe("faElapsed", () => {
   });
 });
 
-describe("faDuration", () => {
-  it("drops the empty half of the sentence", () => {
+describe("the menu bar clocks", () => {
+  it("counts down in Latin digits", () => {
+    expect(enClock(25 * 60_000)).toBe("25:00");
+    expect(enClock(24 * 60_000 + 59_001)).toBe("25:00");
+    expect(enClock(-5_000)).toBe("00:00");
+  });
+
+  it("counts the ring up in Latin digits", () => {
+    expect(enElapsed(65_000)).toBe("+01:05");
+    expect(enElapsed(0)).toBe("+00:00");
+    expect(enElapsed(3 * 60 * 60_000)).toBe("+180:00");
+  });
+});
+
+describe("faDuration", () => {  it("drops the empty half of the sentence", () => {
     expect(faDuration(45 * 60_000)).toBe("۴۵ دقیقه");
     expect(faDuration(120 * 60_000)).toBe("۲ ساعت");
     expect(faDuration(145 * 60_000)).toBe("۲ ساعت و ۲۵ دقیقه");

@@ -85,10 +85,12 @@ is confirmed, and the break is anchored at that end — so ring time is eaten ou
 of the break, and a long enough ring leaves none.
 
 **The shell never decides.** The page owns every fact; the shell renders the
-tray title, bounces the dock, and registers the login item. Ending a ring
-stays the page's deliberate tap — the watchdog only announces. The bridge
-(`preload.cjs`) carries `setTray` and `setAutoStart` outward and nothing back;
-do not grow RPC over it.
+tray title and menu, bounces the dock, and registers the login item. Menu taps
+come back as commands (`quick-start`, `cancel`, `confirm`, `continue`,
+`show-stats`), which the page applies to whatever live session it finds — and
+the next tick's state heals anything that raced. Ending a ring stays the
+page's deliberate tap. The bridge (`preload.cjs`) carries `setTray` and
+`setAutoStart` outward and command ids inward; do not grow RPC over it.
 
 **Closing parks, quitting quits.** Closing the window hides it into the menu
 bar, where the countdown lives on in the tray title. Only the tray menu's

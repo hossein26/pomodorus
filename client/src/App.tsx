@@ -6,7 +6,7 @@ import { NavBar } from "@/components/nav-bar";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SessionProvider, type SessionValue } from "@/lib/session";
-import { applyStoredAutoStart, useTraySync } from "@/lib/tray";
+import { applyStoredAutoStart, useTrayCommands, useTraySync } from "@/lib/tray";
 import { LandingRoute } from "@/routes/landing";
 import { StatsRoute } from "@/routes/stats";
 import { TimerRoute } from "@/routes/timer";
@@ -27,6 +27,7 @@ const FRAME =
  */
 function TrayBridge() {
   useTraySync();
+  useTrayCommands();
   useEffect(() => {
     applyStoredAutoStart();
   }, []);

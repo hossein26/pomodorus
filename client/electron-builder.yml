@@ -9,13 +9,14 @@ files:
   - dist/**/*
   - electron/*.cjs
   - package.json
-# The tray widget reads its image at runtime, so the source icon ships beside
-# the app rather than inside the bundle.
+# The tray widget reads its images at runtime, so they ship beside the app
+# rather than inside the bundle.
 extraResources:
-  - from: public/
+  - from: build/
     to: assets/
     filter:
-      - icon-192.png
+      - tray.png
+      - tray@2x.png
 mac:
   category: public.app-category.productivity
   icon: build/icon.icns

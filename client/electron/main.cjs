@@ -30,15 +30,12 @@ let bellTimer = null;
 let bellArmedFor = null;
 /** Ring ids already bounced for, so one bell bounces once. */
 let bouncedRing = null;
+/** The menu the page's last state builds, popped up on demand. */
+let trayMenu = null;
+/** The last state the page pushed, which the menu is built from. */
+let lastTrayState = { mode: "idle", quickStart: null };
 
 app.setName("Pomodorus");
-
-function asset(name) {
-  // Unpacked: beside the shell. Packaged: electron-builder's extraResources.
-  return app.isPackaged
-    ? path.join(process.resourcesPath, "assets", name)
-    : path.join(__dirname, "..", "public", name);
-}
 
 function show() {
   if (win === null) {
@@ -123,16 +120,57 @@ function createWindow() {
   });
 }
 
+function trayIcon() {
+  // Unpacked: beside the shell. Packaged: electron-builder's extraResources.
+  // The @2x sibling is picked up automatically on a retina bar.
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "assets", "tray.png")
+    : path.join(__dirname, "..", "build", "tray.png");
+}
+
 function createTray() {
-  const image = nativeImage
-    .createFromPath(asset("icon-192.png"))
-    .resize({ width: 16, height: 16 });
-  image.setTemplateImage(true);
+  // The app's own icon, in full colour: a template image would reduce the
+  // dark tile to a solid black square. The tile is dark with a faint edge,
+  // so it reads on light bars and dark ones alike.
+  const image = nativeImage.createFromPath(trayIcon());
   tray = new Tray(image);
   tray.setToolTip("Pomodorus");
   tray.setTitle("", { fontType: "monospacedDigit" });
   paintMenu();
-  tray.on("click", show);
+  // Left-click opens the widget's menu — the full management without opening
+  // the window. Right-click is the play/pause toggle.
+  tray.on("click", () => {
+    if (trayMenu) tray.popUpContextMenu(trayMenu);
+  });
+  tray.on("right-click", onToggle);
+}
+
+/**
+ * Play/pause on one gesture: with nothing live it starts the picked timer on
+ * the spot; with something running it stops it (cancel a pomodoro, skip a
+ * break); with something ringing it ends the ring. The page applies each to
+ * the live session it finds, so a tap that raced the bell simply lands
+ * nowhere.
+ */
+function onToggle() {
+  const state = lastTrayState;
+  if (state.mode === "idle") {
+    if (!state.quickStart) {
+      if (trayMenu) tray.popUpContextMenu(trayMenu);
+      return;
+    }
+    sendCommand("quick-start");
+    new Notification({
+      title: "شروع شد",
+      body: state.quickStart.label,
+    }).show();
+    return;
+  }
+  if (state.mode === "running") {
+    sendCommand("cancel");
+    return;
+  }
+  sendCommand("confirm");
 }
 
 function loginEnabled() {
@@ -153,28 +191,69 @@ function setLogin(enabled) {
   paintMenu();
 }
 
+function sendCommand(id) {
+  try {
+    win?.webContents.send("tray-command", id);
+  } catch {
+    // The page will pick the state up on its next tick instead.
+  }
+}
+
+function showAndSend(id) {
+  show();
+  sendCommand(id);
+}
+
 function paintMenu() {
   if (tray === null) return;
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: "نمایش تایمر", click: show },
-      { type: "separator" },
-      {
-        label: "باز شدن همراه مک",
-        type: "checkbox",
-        checked: loginEnabled(),
-        click: (item) => setLogin(item.checked),
+  const state = lastTrayState;
+  const dynamic = [];
+
+  if (state.mode === "idle") {
+    if (state.quickStart) {
+      dynamic.push({
+        label: state.quickStart.label,
+        click: () => sendCommand("quick-start"),
+      });
+    } else {
+      dynamic.push({
+        label: String(state.emptyLabel ?? ""),
+        enabled: false,
+      });
+    }
+  } else {
+    for (const action of state.actions ?? []) {
+      dynamic.push({
+        label: action.label,
+        click: () => sendCommand(action.id),
+      });
+    }
+  }
+
+  trayMenu = Menu.buildFromTemplate([
+    ...dynamic,
+    { type: "separator" },
+    { label: "نمایش تایمر", click: show },
+    {
+      label: "کارنامه",
+      click: () => showAndSend("show-stats"),
+    },
+    { type: "separator" },
+    {
+      label: "باز شدن همراه مک",
+      type: "checkbox",
+      checked: loginEnabled(),
+      click: (item) => setLogin(item.checked),
+    },
+    { type: "separator" },
+    {
+      label: "خروج",
+      click: () => {
+        quitting = true;
+        app.quit();
       },
-      { type: "separator" },
-      {
-        label: "خروج",
-        click: () => {
-          quitting = true;
-          app.quit();
-        },
-      },
-    ]),
-  );
+    },
+  ]);
 }
 
 function disarm() {
@@ -220,6 +299,8 @@ function armWatchdog(id, endsAt, label) {
 
 function onTrayState(state) {
   if (tray === null || !state || typeof state !== "object") return;
+  lastTrayState = state;
+  paintMenu();
   if (state.mode === "idle") {
     disarm();
     tray.setTitle("", { fontType: "monospacedDigit" });
